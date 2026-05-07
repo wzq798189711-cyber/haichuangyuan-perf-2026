@@ -1,0 +1,32 @@
+# macOS / Windows 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*~
+
+# 构建/临时产物
+_*.py
+_*.json
+_*.txt
+_smoke_shots/
+*.log
+
+# 敏感 / 工作底稿（绝不上传）
+账号管理.xlsx
+账号管理*.xlsx
+财报*.xlsx
+评估*.xlsx
+*.pptx
+*源文件*
+*底稿*
+*_内部*
+
+# Python
+__pycache__/
+*.pyc
+.env
