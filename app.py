@@ -284,6 +284,41 @@ def api_state_get():
     return jsonify(build_state())
 
 
+# ─────────────────── 路由：填报单行读取（并发合并用）─────────────────────
+@app.route("/api/fill_row")
+@login_required
+def api_fill_row():
+    """读取单条填报行（弹窗保存前用于先读后合并，防覆盖并发修改）。"""
+    kind     = request.args.get("kind", "")      # "core" | "task"
+    try:
+        idx   = int(request.args.get("idx", ""))
+        month = str(request.args.get("month", ""))
+    except (ValueError, TypeError):
+        return jsonify({"error": "参数错误"}), 400
+
+    if kind == "core":
+        row = query(
+            "SELECT score, note, files FROM opp_fill WHERE opp_idx=%s AND month=%s",
+            (idx, month), one=True,
+        )
+    elif kind == "task":
+        row = query(
+            "SELECT score, note, files FROM task_fill WHERE task_idx=%s AND month=%s",
+            (idx, month), one=True,
+        )
+    else:
+        return jsonify({"error": "kind 必须为 core 或 task"}), 400
+
+    if row is None:
+        return jsonify({"exists": False, "score": None, "note": "", "files": []})
+    return jsonify({
+        "exists": True,
+        "score": row["score"],
+        "note":  row["note"] or "",
+        "files": row["files"] or [],
+    })
+
+
 # ─────────────────── 路由：核心攻坚项 ───────────────────
 @app.route("/api/opp_fill", methods=["POST"])
 @login_required

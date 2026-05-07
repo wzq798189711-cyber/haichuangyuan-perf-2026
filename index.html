@@ -1691,11 +1691,16 @@ function _buildFillCtx() {
 }
 
 window.openFillModal = function(kind, idx, month) {
+  const initScore = getItemScore(kind, idx, month);
+  const initNote  = getFillNote(kind, idx, month);
+  const initFiles = getFillFiles(kind, idx, month).slice();
   fillDraft = {
     kind, idx, month,
-    score: getItemScore(kind, idx, month),
-    files: getFillFiles(kind, idx, month).slice(),
-    note: getFillNote(kind, idx, month),
+    score: initScore,
+    note:  initNote,
+    files: initFiles,
+    // 快照：记录弹窗打开时本地状态，fillSave 据此判断用户是否改动了某字段
+    snapshot: { score: initScore, note: initNote, files: JSON.stringify(initFiles) },
   };
   renderFillModal();
 };
@@ -1835,19 +1840,40 @@ window.fillSave = async function() {
     alert("请先选择评分（100/70/0/不计）后再保存。");
     return;
   }
-  const { kind, idx, month, score, note, files } = fillDraft;
-  // 立即更新本地 state
+  const { kind, idx, month, score, note, files, snapshot } = fillDraft;
+
+  // ── 先读后合并（防并发覆盖）──────────────────────────────
+  // 从服务器拉取该行最新值，对"用户未改动"的字段保留服务器最新值
+  let dbRow = null;
+  try {
+    const r = await fetch(`/api/fill_row?kind=${kind}&idx=${idx}&month=${encodeURIComponent(month)}`);
+    if (r.ok) dbRow = await r.json();
+  } catch (_) { /* 网络失败则跳过合并，直接用用户值 */ }
+
+  // 逐字段判断：用户是否改动（与快照对比）
+  const snap = snapshot || {};
+  const userChangedScore = score !== snap.score;
+  const userChangedNote  = (note||"") !== (snap.note||"");
+  const userChangedFiles = JSON.stringify(files) !== snap.files;
+
+  const finalScore = (userChangedScore || !dbRow || !dbRow.exists) ? score : dbRow.score;
+  const finalNote  = (userChangedNote  || !dbRow || !dbRow.exists) ? (note||"") : (dbRow.note||"");
+  const finalFiles = (userChangedFiles || !dbRow || !dbRow.exists) ? files : (dbRow.files||[]);
+  // ────────────────────────────────────────────────────────
+
+  // 立即更新本地 state（UI 即时响应）
   const store = kind === "core" ? state.oppFill : state.taskFill;
   const rec = store[idx] = store[idx] || { months:{}, milestones:{} };
   rec.months = rec.months || {};
-  rec.months[month] = { score, note: note||"", files: files.slice() };
+  rec.months[month] = { score: finalScore, note: finalNote, files: finalFiles.slice() };
   fillDraft = null;
   document.getElementById("modalHost").innerHTML = "";
   render();
-  // 异步写库（完整写入 score + note + files）
+
+  // 写入合并后的完整行
   try {
-    if (kind === "core") await API.saveOppFill(idx, month, score, note||"", files);
-    else                  await API.saveTaskFill(idx, month, score, note||"", files);
+    if (kind === "core") await API.saveOppFill(idx, month, finalScore, finalNote, finalFiles);
+    else                  await API.saveTaskFill(idx, month, finalScore, finalNote, finalFiles);
   } catch(e) { _apiError("填报保存失败", e); }
 };
 
