@@ -515,6 +515,12 @@ try {
   if (saved) Object.assign(state, saved);
 } catch {}
 
+// 兜底：若历史保存的 state.month / state.tab 不在当前可选集合内（旧版本残留或损坏），重置为默认值，避免渲染时抛错卡死
+const _VALID_MONTHS = ["3月","4月","5月","6月"];
+const _VALID_TABS = ["dashboard","dimA","core","special","rules"];
+if (!_VALID_MONTHS.includes(state.month)) state.month = "3月";
+if (!_VALID_TABS.includes(state.tab)) state.tab = "dashboard";
+
 // ===== localStorage 迁移（方案B：按 业务线+客户 迁 idx；迁移失败条目保留空并提示）=====
 function migrateLocalIfNeeded() {
   const savedVer = state._dataVer;
