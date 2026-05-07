@@ -35,6 +35,5 @@ localPort = 5000
 externalPort = 80
 
 [deployment]
-deploymentTarget = "static"
-publicDir = "."
+deploymentTarget = "cloudrun"
 run = ["python3", "-m", "http.server", "5000"]
