@@ -1,4 +1,4 @@
-modules = ["web", "python-3.11"]
+modules = ["web", "python-3.11", "postgresql-16"]
 [agent]
 expertMode = true
 stack = "BEST_EFFORT_FALLBACK"
@@ -27,7 +27,7 @@ outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 serve.py"
+args = "uv run python app.py"
 waitForPort = 5000
 
 [[ports]]
