@@ -336,6 +336,22 @@ tr:hover td { background:#fafbfc; }
 }
 
 .item .milestone button.btn-ghost { padding:2px 10px; }
+
+/* ── 任务管理按钮（仅数据管理员可见）── */
+.mgmt-btn { display:inline-flex; align-items:center; gap:3px; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid #c7d2fe; background:#eef2ff; color:#4338ca; transition:all .15s; }
+.mgmt-btn:hover { background:#c7d2fe; }
+.mgmt-btn.mgmt-del { border-color:#fca5a5; background:#fef2f2; color:#b91c1c; }
+.mgmt-btn.mgmt-del:hover { background:#fca5a5; }
+.mgmt-add-btn { display:block; width:calc(100% - 2px); margin:10px 0 4px; padding:9px 0; border:1.5px dashed #a5b4fc; border-radius:8px; background:#f5f3ff; color:#6d28d9; font-size:13px; font-weight:600; cursor:pointer; text-align:center; transition:all .2s; }
+.mgmt-add-btn:hover { background:#ede9fe; border-color:#7c3aed; }
+/* 管理模态框 */
+.mgmt-form { display:flex; flex-direction:column; gap:12px; padding:4px 0; }
+.mgmt-form label { display:block; font-size:12px; color:#64748b; font-weight:600; margin-bottom:3px; }
+.mgmt-form input[type=text], .mgmt-form select, .mgmt-form textarea { width:100%; padding:9px 11px; border:1.5px solid #e2e8f0; border-radius:8px; font-size:13px; box-sizing:border-box; font-family:inherit; resize:vertical; }
+.mgmt-form input:focus, .mgmt-form select:focus, .mgmt-form textarea:focus { outline:none; border-color:#6366f1; }
+.mgmt-form .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.mgmt-form .ms-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.mgmt-form .ms-item label { font-size:11px; color:#94a3b8; }
 </style>
 </head>
 <body>
@@ -450,6 +466,12 @@ const API = {
   async reset() {
     return _apiPost("/api/reset", {});
   },
+
+  // ── 任务管理（仅数据管理员 wangzhaoqian）──
+  async manageOppSave(body)   { return _apiPost("/api/manage/opp", body); },
+  async manageOppDelete(body) { return _apiReq("DELETE", "/api/manage/opp", body); },
+  async manageTaskSave(body)  { return _apiPost("/api/manage/task", body); },
+  async manageTaskDelete(body){ return _apiReq("DELETE", "/api/manage/task", body); },
 };
 
 // 辅助：统一 fetch + 错误处理
@@ -734,9 +756,13 @@ async function _pollState() {
   try {
     const fresh = await API.fetchState();
     // 合并远端数据到本地 state（以远端为准，保留用户正在编辑中的 fillDraft 不丢失）
-    state.oppFill    = fresh.oppFill    || {};
-    state.taskFill   = fresh.taskFill   || {};
-    state.dimAActual = fresh.dimAActual || {};
+    state.oppFill       = fresh.oppFill       || {};
+    state.taskFill      = fresh.taskFill      || {};
+    state.dimAActual    = fresh.dimAActual    || {};
+    state.customOpps    = fresh.customOpps    || [];
+    state.customTasks   = fresh.customTasks   || [];
+    state.oppOverrides  = fresh.oppOverrides  || {};
+    state.taskOverrides = fresh.taskOverrides || {};
     // 把更新后的里程碑文字同步回 DATA（供 getItemScore 正确回退）
     ["oppFill","taskFill"].forEach(key => {
       const store = state[key];
@@ -821,12 +847,11 @@ function normMonth(s) {
 }
 
 function getItemScore(kind, idx, month) {
-  // 优先：本地填报（localStorage）
   const rec = kind === "core" ? state.oppFill[idx] : state.taskFill[idx];
   if (rec && rec.months && rec.months[month] && rec.months[month].score != null) {
     return rec.months[month].score;
   }
-  // 回退：JSON 里的里程碑评分（由 Excel 回填生成，作为部门预填默认值）
+  if (idx >= 10000) return null;
   const obj = kind === "core" ? DATA.opps[idx] : DATA.tasks[idx];
   if (obj && obj.里程碑 && obj.里程碑[month] && obj.里程碑[month].评分 != null) {
     return obj.里程碑[month].评分;
@@ -850,24 +875,65 @@ function collectItems(dept, month) {
   const core = [];
   const special = [];
   const dupShow = [];
+  const oppOvr  = state.oppOverrides  || {};
+  const taskOvr = state.taskOverrides || {};
+
   DATA.opps.forEach((o, i) => {
-    if (!deptMatch(o.主责部门, dept)) return;
-    const ms = o.里程碑 || {};
+    const ovr = oppOvr[i];
+    if (ovr && ovr.deleted) return;
+    const opp = ovr ? Object.assign({}, o, ovr, {deleted:undefined}) : o;
+    if (!deptMatch(opp.主责部门, dept)) return;
+    const ms = opp.里程碑 || {};
     const monthMs = ms[month];
     if (!monthMs) return;
-    core.push({ idx:i, opp:o, milestone:monthMs });
+    core.push({ idx:i, opp, milestone:monthMs });
   });
+
+  (state.customOpps || []).forEach(co => {
+    if (co.deleted) return;
+    if (!deptMatch(co.dept, dept)) return;
+    const idx = 10000 + co.id;
+    const ms  = co.milestones || {};
+    const monthMs = ms[month] ? { 目标: ms[month] } : null;
+    if (!monthMs) return;
+    const opp = {
+      主责部门: co.dept, 客户: co.客户, opp_type: co.opp_type,
+      归类说明: co.归类说明, 系数: co.系数,
+      业务线: "", 阶段: "", 预估金额: "", 预计签约月: "",
+      里程碑: {}, _isCustom: true, _customId: co.id,
+    };
+    core.push({ idx, opp, milestone: monthMs });
+  });
+
   DATA.tasks.forEach((t, i) => {
-    if (!deptMatch(t.部门, dept)) return;
-    if (normMonth(t.月份) !== month) return;
+    const ovr = taskOvr[i];
+    if (ovr && ovr.deleted) return;
+    const task = ovr ? Object.assign({}, t, ovr, {deleted:undefined}) : t;
+    if (!deptMatch(task.部门, dept)) return;
+    if (normMonth(task.月份) !== month) return;
     if (DUP_IDX.has(i)) {
-      dupShow.push({ idx:i, task:t });
+      dupShow.push({ idx:i, task });
       return;
     }
-    const ms = t.里程碑 || {};
+    const ms = task.里程碑 || {};
     const monthMs = ms[month] || {};
-    special.push({ idx:i, task:t, milestone:monthMs });
+    special.push({ idx:i, task, milestone:monthMs });
   });
+
+  (state.customTasks || []).forEach(ct => {
+    if (ct.deleted) return;
+    if (!deptMatch(ct.dept, dept)) return;
+    const idx = 10000 + ct.id;
+    const ms  = ct.milestones || {};
+    const monthMs = ms[month] ? { 目标: ms[month] } : {};
+    const task = {
+      部门: ct.dept, 描述: ct.描述, 等级: ct.等级, 系数: ct.系数,
+      业务线: ct.业务线, 期望完成: ct.期望完成, 完成情况: ct.完成情况,
+      里程碑: {}, _isCustom: true, _customId: ct.id,
+    };
+    special.push({ idx, task, milestone: monthMs });
+  });
+
   return { core, special, dupShow };
 }
 
@@ -1036,7 +1102,7 @@ function renderDashboard() {
     const reverse = metric.名称.includes("费用") || metric.名称.includes("成本");
     let ratio = null;
     if (target && actual != null) ratio = reverse ? target/Math.max(actual,0.01) : actual/target;
-    const rp = ratio == null ? "—" : (Math.min(ratio,1.5)*100).toFixed(1) + "%";
+    const rp = ratio == null ? "—" : (Math.max(0, Math.min(ratio,1.5))*100).toFixed(1) + "%";
     const actualDisp = actual == null ? "—" : fmtNum(actual);
     const valCls = String(actualDisp).length > 7 ? "small" : "";
     const unitSuffix = metric.单位 || "";
@@ -1044,14 +1110,14 @@ function renderDashboard() {
     const mTgt = isCum ? null : _getMonthlyTarget(metric.名称, m);
     let mRatio = null;
     if (!isCum && mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
-    const mRp = mRatio == null ? "—" : (Math.min(mRatio,1.5)*100).toFixed(1) + "%";
+    const mRp = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1) + "%";
     const mRpColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
     // 年度累计完成率（当月视图额外显示）
     let annualRp = "—";
     if (!isCum) {
       const cumA = getDimAActualCumulative(metric.名称);
       if (target && cumA != null) {
-        const cr = reverse ? target/Math.max(cumA,0.01) : cumA/target;
+        const cr = Math.max(0, reverse ? target/Math.max(cumA,0.01) : cumA/target);
         annualRp = (Math.min(cr,1.5)*100).toFixed(1) + "%";
       }
     }
@@ -1091,10 +1157,10 @@ function renderDashboard() {
     const mTgt = isCum ? null : _getMonthlyTarget(metric.名称, m);
     let mRatio = null;
     if (!isCum && mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
-    const mRpStr = mRatio == null ? "—" : (Math.min(mRatio,1.5)*100).toFixed(1)+"%";
+    const mRpStr = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1)+"%";
     const mRpColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
     // 年度完成率
-    const annRpStr = ratio == null ? "—" : (Math.min(ratio,1.5)*100).toFixed(1)+"%";
+    const annRpStr = ratio == null ? "—" : (Math.max(0, Math.min(ratio,1.5))*100).toFixed(1)+"%";
     const annRpColor = ratio==null?"#94a3b8":ratio>=1?"var(--ok)":ratio>=0.8?"var(--warn)":"var(--err)";
     html += `<div class="mini-kpi ${reverse?'reverse':''}" onclick="window.openMetricDrawer('${encodeURIComponent(metric.名称)}')">
       <div class="mk-lbl">${metric.名称}</div>
@@ -1112,9 +1178,9 @@ function renderDashboard() {
     const actual = isCum ? getDimAActualCumulative(metric.名称) : getDimAActual(metric.名称, m);
     const reverse = metric.名称.includes("费用") || metric.名称.includes("成本");
     if (!target || actual == null) return null;
-    return reverse ? target/Math.max(actual,0.01) : actual/target;
+    return Math.max(0, reverse ? target/Math.max(actual,0.01) : actual/target);
   }).filter(r => r != null);
-  const dimARate = aRates.length ? Math.min(1.2, aRates.reduce((a,b)=>a+b,0)/aRates.length) : null;
+  const dimARate = aRates.length ? Math.min(1.2, Math.max(0, aRates.reduce((a,b)=>a+b,0)/aRates.length)) : null;
 
   const deptScores = DEPTS.map(d => {
     const r = isCum ? computeDimBCumulative(d) : (() => {
@@ -1369,7 +1435,7 @@ function renderDimA() {
     const reverse = m_.名称.includes("费用") || m_.名称.includes("成本");
     const hasActual = !isNaN(a) && actual[m_.名称] !== "" && actual[m_.名称] != null;
     const ratio = (!hasActual || !target) ? null : (reverse ? target/Math.max(a,0.01) : a/target);
-    const rp = ratio == null ? "—" : (Math.min(ratio,1.2)*100).toFixed(1) + "%";
+    const rp = ratio == null ? "—" : (Math.max(0, Math.min(ratio,1.2))*100).toFixed(1) + "%";
     const rateCls = ratio==null ? "r-none" : ratio>=1 ? "r-ok" : ratio>=0.8 ? "r-warn" : "r-err";
     return `<div class="dm-card ${reverse?'reverse':''}">
       <div class="dm-ico">${getIco(m_.名称)}</div>
@@ -1479,15 +1545,24 @@ function renderCore() {
       html += `<div style="font-size:12px;color:var(--mute);padding:12px;text-align:center">${state.typeFilter==='all'?'本月本部门无核心攻坚项':'当前筛选无匹配条目'}</div>`;
     } else {
       core.forEach(({idx, opp, milestone}) => {
+        const mgmt = SESS_CAN_MANAGE_DATA ? {
+          isCustom: !!opp._isCustom, customId: opp._customId || null,
+          origIdx: opp._isCustom ? null : idx, dept,
+        } : null;
         html += renderItemCard("core", idx, opp.客户, [
-          `<span class="type-pill type-${opp.opp_type}">${TYPE_LABELS[opp.opp_type]}</span>`,
-          `业务线：${opp.业务线}`,
+          `<span class="type-pill type-${opp.opp_type}">${TYPE_LABELS[opp.opp_type]||opp.opp_type}</span>`,
+          `业务线：${opp.业务线||""}`,
           `阶段：${opp.阶段||"-"}`,
           `预估金额：${opp.预估金额||"-"}`,
           opp.预计签约月 ? `预计签约月：${opp.预计签约月}` : "",
           opp.归类说明 ? `归类：${opp.归类说明}` : "",
-        ].filter(Boolean), milestone, 1.2, "core");
+        ].filter(Boolean), milestone, 1.2, "core", null, mgmt);
       });
+    }
+    if (SESS_CAN_MANAGE_DATA) {
+      const addKey = `_mgmtAdd_core_${dept.replace(/[^a-z0-9]/gi,'_')}`;
+      window[addKey] = { dept };
+      html += `<button class="mgmt-add-btn" onclick="window.openItemAddModal('core','${addKey}')">＋ 新增核心攻坚项</button>`;
     }
     html += `</div>`;
   });
@@ -1512,12 +1587,12 @@ window.openMetricDrawer = function(nameEnc) {
     // 月度完成率
     let mRatio = null;
     if (mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
-    const mRp = mRatio == null ? "—" : (Math.min(mRatio,1.5)*100).toFixed(1)+"%";
+    const mRp = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1)+"%";
     const mColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
     // 年度累计完成率
     if (actual != null) { _cumActual += actual; _cumHas = true; }
     let yrRatio = null;
-    if (target && _cumHas) yrRatio = reverse ? target/Math.max(_cumActual,0.01) : _cumActual/target;
+    if (target && _cumHas) yrRatio = Math.max(0, reverse ? target/Math.max(_cumActual,0.01) : _cumActual/target);
     const yrRp = yrRatio == null ? "—" : (Math.min(yrRatio,1.5)*100).toFixed(1)+"%";
     const yrColor = yrRatio==null?"#94a3b8":yrRatio>=1?"var(--ok)":yrRatio>=0.8?"var(--warn)":"var(--err)";
     return `<tr>
@@ -1546,7 +1621,7 @@ window.openMetricDrawer = function(nameEnc) {
             <dt>单位</dt><dd>${metric.单位||"—"}</dd>
             <dt>年度目标</dt><dd>${fmtNum(metric.目标值)} ${metric.单位||""}</dd>
             <dt>方向</dt><dd>${reverse?'<span class="badge badge-B">逆向（越低越好）</span>':"正向（越高越好）"}</dd>
-            <dt>2026 累计</dt><dd>${cum==null?'<span style="color:#cbd5e1">未填报</span>':fmtNum(cum)+" "+(metric.单位||"")} · 完成率 <b style="color:${cumRatio==null?'#94a3b8':cumRatio>=1?'var(--ok)':cumRatio>=0.8?'var(--warn)':'var(--err)'}">${cumRatio==null?'—':(Math.min(cumRatio,1.2)*100).toFixed(1)+'%'}</b></dd>
+            <dt>2026 累计</dt><dd>${cum==null?'<span style="color:#cbd5e1">未填报</span>':fmtNum(cum)+" "+(metric.单位||"")} · 完成率 <b style="color:${cumRatio==null?'#94a3b8':cumRatio>=1?'var(--ok)':cumRatio>=0.8?'var(--warn)':'var(--err)'}">${cumRatio==null?'—':(Math.max(0,Math.min(cumRatio,1.2))*100).toFixed(1)+'%'}</b></dd>
             ${metric.备注?`<dt>口径说明</dt><dd style="font-weight:400;color:#475569">${escapeHtml(metric.备注)}</dd>`:""}
           </dl>
         </div>
@@ -1663,13 +1738,22 @@ function renderSpecial() {
       special.forEach(({idx, task, milestone}) => {
         const grade = task.等级 || "B";
         const coef = task.系数 || 1.0;
+        const mgmt = SESS_CAN_MANAGE_DATA ? {
+          isCustom: !!task._isCustom, customId: task._customId || null,
+          origIdx: task._isCustom ? null : idx, dept,
+        } : null;
         html += renderItemCard("special", idx, task.描述, [
           `<span class="badge badge-${grade}">${grade} 级</span>`,
           `业务线：${task.业务线||""}`,
           `期望完成：${task.期望完成||"-"}`,
           `完成情况：${task.完成情况||"-"}`,
-        ], milestone, coef, "special", grade);
+        ], milestone, coef, "special", grade, mgmt);
       });
+    }
+    if (SESS_CAN_MANAGE_DATA) {
+      const addKey = `_mgmtAdd_special_${dept.replace(/[^a-z0-9]/gi,'_')}`;
+      window[addKey] = { dept };
+      html += `<button class="mgmt-add-btn" onclick="window.openItemAddModal('special','${addKey}')">＋ 新增专项任务项</button>`;
     }
 
     if (dupShow.length) {
@@ -1698,11 +1782,21 @@ function renderSpecial() {
   el.innerHTML = html;
 }
 
-function renderItemCard(kind, idx, name, metaLines, milestone, coef, cls, grade) {
+function renderItemCard(kind, idx, name, metaLines, milestone, coef, cls, grade, mgmt) {
+  // mgmt = { isCustom, customId, origIdx, dept } | null  (仅 canManageData 时传入)
   const m = state.month;
   const score = getItemScore(kind, idx, m);
   const coefTag = grade ? `${grade} ×${coef}` : `×${coef}`;
   const coefBadge = cls==="core" ? "badge-core" : "badge-special";
+
+  // 管理按钮（仅 wangzhaoqian 可见）
+  let mgmtBtns = "";
+  if (SESS_CAN_MANAGE_DATA && mgmt) {
+    const ek = `_mgmt_${kind}_${idx}`;
+    window[ek] = mgmt;
+    mgmtBtns = `<button class="mgmt-btn" onclick="window.openItemEditModal('${kind}','${ek}')">✎ 编辑</button>
+      <button class="mgmt-btn mgmt-del" onclick="window.deleteItemConfirm('${kind}','${ek}')">✕ 删除</button>`;
+  }
 
   // 状态徽章
   let statusBtn;
@@ -1730,7 +1824,6 @@ function renderItemCard(kind, idx, name, metaLines, milestone, coef, cls, grade)
     </div>`;
   }
 
-  // 核心攻坚项显示本月里程碑块（已锁定，统一按表定版，不再逐条编辑）；专项任务项按月任务已固定，不显示
   const milestoneBlock = cls === "core" ? `<div class="milestone">
       <b>${m} 本月里程碑</b>：${milestone.目标 || "（待补充）"}
     </div>` : "";
@@ -1738,7 +1831,8 @@ function renderItemCard(kind, idx, name, metaLines, milestone, coef, cls, grade)
   return `<div class="item ${cls}">
     <div class="i-head">
       <span class="badge ${coefBadge}">${coefTag}</span>
-      <div class="i-name">${name}</div>
+      <div class="i-name">${escapeHtml(name)}</div>
+      ${mgmtBtns}
       ${statusBtn}
     </div>
     <div class="i-meta">${metaLines.map(x=>`<span>${x}</span>`).join("")}</div>
@@ -1757,12 +1851,24 @@ const MAX_FILE_SIZE = 50 * 1024 * 1024;
 let fillDraft = null;
 
 function _buildFillCtx() {
-  const obj = fillDraft.kind === "core" ? DATA.opps[fillDraft.idx] : DATA.tasks[fillDraft.idx];
+  const idx = fillDraft.idx;
+  let obj;
+  if (idx >= 10000) {
+    // 自定义任务项
+    const customId = idx - 10000;
+    if (fillDraft.kind === "core") {
+      const co = (state.customOpps || []).find(c => c.id === customId);
+      return { name: co ? co.客户 : `自定义#${customId}`, meta: co ? co.dept : "", milestone: co ? (co.milestones[fillDraft.month] || "（待补充）") : null };
+    } else {
+      const ct = (state.customTasks || []).find(c => c.id === customId);
+      return { name: ct ? ct.描述 : `自定义任务#${customId}`, meta: ct ? `${ct.业务线||""} · ${ct.等级||"B"}级 · ${ct.dept}` : "", milestone: null };
+    }
+  }
+  obj = fillDraft.kind === "core" ? DATA.opps[idx] : DATA.tasks[idx];
   const name = fillDraft.kind === "core" ? obj.客户 : obj.描述;
   const meta = fillDraft.kind === "core"
     ? `${obj.业务线||""} · ${TYPE_LABELS[obj.opp_type]||""} · ${obj.主责部门||""}`
     : `${obj.业务线||""} · ${obj.等级||"B"}级 · ${obj.部门||""}`;
-  // 专项任务项不展示里程碑（按月固定）
   const ms = fillDraft.kind === "core"
     ? ((obj.里程碑 && obj.里程碑[fillDraft.month] && obj.里程碑[fillDraft.month].目标) || "（待补充）")
     : null;
@@ -2009,6 +2115,198 @@ window.saveMilestone = async function(kind, idx, month) {
 window.closeMask = function(e) {
   if (e && e.target.className !== "mask") return;
   document.getElementById("modalHost").innerHTML = "";
+};
+
+// ===== 任务管理 CRUD 弹窗（仅 wangzhaoqian 可见）=====
+const _MGMT_MONTHS = ["3月","4月","5月","6月"];
+const _DEPT_LIST = ["销售部-1","销售部-2","经营管理部","研发交付部","综合部"];
+let _mgmtCtx = null;   // { kind, mgmt } — 当前打开的管理模态上下文
+
+function _mgmtClose() { document.getElementById("modalHost").innerHTML = ""; }
+
+function _oppTypeOptions(selected) {
+  const opts = {"channel":"渠道签约","product":"产品/平台","talent":"人才/团队","ecosystem":"生态/合作","brand":"品牌","gov":"政府/园区","group":"集团协同","other":"其他"};
+  return Object.entries(opts).map(([v,l])=>`<option value="${v}"${v===selected?" selected":""}>${l}</option>`).join("");
+}
+function _deptOptions(selected) {
+  return _DEPT_LIST.map(d=>`<option value="${d}"${d===selected?" selected":""}>${d}</option>`).join("");
+}
+
+// ── 核心攻坚项 编辑/新增 ──
+window.openItemAddModal = function(kind, addKey) {
+  const info = window[addKey] || {};
+  _openMgmtModal(kind, null, { dept: info.dept || "" });
+};
+
+window.openItemEditModal = function(kind, ek) {
+  const mgmt = window[ek];
+  if (!mgmt) return;
+  let prefill = { dept: mgmt.dept || "" };
+  if (kind === "core") {
+    if (mgmt.isCustom) {
+      const co = (state.customOpps || []).find(c => c.id === mgmt.customId);
+      if (co) prefill = { dept: co.dept, 客户: co.客户, opp_type: co.opp_type, 归类说明: co.归类说明, 系数: co.系数, milestones: co.milestones };
+    } else {
+      const o = DATA.opps[mgmt.origIdx];
+      if (o) prefill = { dept: o.主责部门, 客户: o.客户, opp_type: o.opp_type, 归类说明: o.归类说明, 系数: o.系数||1.2, milestones: {} };
+    }
+  } else {
+    if (mgmt.isCustom) {
+      const ct = (state.customTasks || []).find(c => c.id === mgmt.customId);
+      if (ct) prefill = { dept: ct.dept, 描述: ct.描述, 等级: ct.等级, 系数: ct.系数, 业务线: ct.业务线, 期望完成: ct.期望完成, 完成情况: ct.完成情况, milestones: ct.milestones };
+    } else {
+      const t = DATA.tasks[mgmt.origIdx];
+      if (t) prefill = { dept: t.部门, 描述: t.描述, 等级: t.等级, 系数: t.系数||1.0, 业务线: t.业务线, 期望完成: t.期望完成, 完成情况: t.完成情况, milestones: {} };
+    }
+  }
+  _openMgmtModal(kind, mgmt, prefill);
+};
+
+function _openMgmtModal(kind, mgmt, prefill) {
+  _mgmtCtx = { kind, mgmt };
+  const isEdit = !!mgmt;
+  const title = isEdit ? (kind==="core"?"编辑核心攻坚项":"编辑专项任务项") : (kind==="core"?"新增核心攻坚项":"新增专项任务项");
+  const ms = prefill.milestones || {};
+
+  let formHtml;
+  if (kind === "core") {
+    formHtml = `
+      <div class="mgmt-form">
+        <div class="form-row">
+          <div><label>所属部门</label><select id="_mf_dept">${_deptOptions(prefill.dept||"")}</select></div>
+          <div><label>类型</label><select id="_mf_opp_type">${_oppTypeOptions(prefill.opp_type||"other")}</select></div>
+        </div>
+        <div><label>客户 / 项目名称</label><input type="text" id="_mf_kehu" value="${escapeHtml(prefill.客户||"")}"></div>
+        <div><label>归类说明（可选）</label><input type="text" id="_mf_guilei" value="${escapeHtml(prefill.归类说明||"")}"></div>
+        <div><label>各月里程碑目标</label>
+          <div class="ms-grid">
+            ${_MGMT_MONTHS.map(mo=>`<div class="ms-item"><label>${mo}</label><textarea id="_mf_ms_${mo}" rows="2">${escapeHtml(ms[mo]||"")}</textarea></div>`).join("")}
+          </div>
+        </div>
+      </div>`;
+  } else {
+    formHtml = `
+      <div class="mgmt-form">
+        <div class="form-row">
+          <div><label>所属部门</label><select id="_mf_dept">${_deptOptions(prefill.dept||"")}</select></div>
+          <div><label>等级</label><select id="_mf_grade">
+            <option value="A"${(prefill.等级||"B")==="A"?" selected":""}>A 级（系数 1.2）</option>
+            <option value="B"${(prefill.等级||"B")==="B"?" selected":""}>B 级（系数 1.0）</option>
+            <option value="C"${(prefill.等级||"B")==="C"?" selected":""}>C 级（系数 0.8）</option>
+          </select></div>
+        </div>
+        <div><label>任务描述</label><input type="text" id="_mf_desc" value="${escapeHtml(prefill.描述||"")}"></div>
+        <div class="form-row">
+          <div><label>业务线（可选）</label><input type="text" id="_mf_yewu" value="${escapeHtml(prefill.业务线||"")}"></div>
+          <div><label>期望完成（可选）</label><input type="text" id="_mf_qiwang" value="${escapeHtml(prefill.期望完成||"")}"></div>
+        </div>
+        <div><label>各月里程碑目标</label>
+          <div class="ms-grid">
+            ${_MGMT_MONTHS.map(mo=>`<div class="ms-item"><label>${mo}</label><textarea id="_mf_ms_${mo}" rows="2">${escapeHtml(ms[mo]||"")}</textarea></div>`).join("")}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  document.getElementById("modalHost").innerHTML = `<div class="mask" onclick="if(event.target.className==='mask')_mgmtClose()">
+    <div class="box" onclick="event.stopPropagation()" style="max-width:600px;width:95vw">
+      <h3>${title}</h3>
+      ${formHtml}
+      <div class="actions" style="margin-top:16px">
+        <button class="btn-ghost" onclick="_mgmtClose()">取消</button>
+        <button class="btn-primary" onclick="window._mgmtSave()">保存</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+window._mgmtSave = async function() {
+  const { kind, mgmt } = _mgmtCtx || {};
+  if (!kind) return;
+  try {
+    const dept = document.getElementById("_mf_dept").value;
+    const milestones = {};
+    _MGMT_MONTHS.forEach(mo => {
+      const v = (document.getElementById(`_mf_ms_${mo}`)?.value || "").trim();
+      if (v) milestones[mo] = v;
+    });
+
+    if (kind === "core") {
+      const body = {
+        dept,
+        客户: document.getElementById("_mf_kehu").value.trim(),
+        opp_type: document.getElementById("_mf_opp_type").value,
+        归类说明: document.getElementById("_mf_guilei").value.trim(),
+        系数: 1.2, milestones,
+        custom_id: (mgmt && mgmt.isCustom) ? mgmt.customId : null,
+        orig_idx:  (mgmt && !mgmt.isCustom) ? mgmt.origIdx : null,
+      };
+      if (!body.客户) { toast("请填写客户/项目名称","warn"); return; }
+      await API.manageOppSave(body);
+    } else {
+      const gradeEl = document.getElementById("_mf_grade");
+      const grade = gradeEl ? gradeEl.value : (mgmt && !mgmt.isCustom ? DATA.tasks[mgmt.origIdx]?.等级 || "B" : "B");
+      const coefMap = {A:1.2, B:1.0, C:0.8};
+      const body = {
+        dept,
+        描述: document.getElementById("_mf_desc").value.trim(),
+        等级: grade, 系数: coefMap[grade] || 1.0,
+        业务线: document.getElementById("_mf_yewu").value.trim(),
+        期望完成: document.getElementById("_mf_qiwang").value.trim(),
+        完成情况: "",
+        milestones,
+        custom_id: (mgmt && mgmt.isCustom) ? mgmt.customId : null,
+        orig_idx:  (mgmt && !mgmt.isCustom) ? mgmt.origIdx : null,
+      };
+      if (!body.描述) { toast("请填写任务描述","warn"); return; }
+      await API.manageTaskSave(body);
+    }
+    _mgmtClose();
+    const fresh = await API.fetchState();
+    state.customOpps    = fresh.customOpps    || [];
+    state.customTasks   = fresh.customTasks   || [];
+    state.oppOverrides  = fresh.oppOverrides  || {};
+    state.taskOverrides = fresh.taskOverrides || {};
+    render();
+    toast("保存成功", "ok");
+  } catch(e) { _apiError("保存失败", e); }
+};
+
+window.deleteItemConfirm = function(kind, ek) {
+  const mgmt = window[ek];
+  if (!mgmt) return;
+  const kindLabel = kind === "core" ? "核心攻坚项" : "专项任务项";
+  document.getElementById("modalHost").innerHTML = `<div class="mask" onclick="if(event.target.className==='mask')_mgmtClose()">
+    <div class="box" onclick="event.stopPropagation()" style="max-width:420px">
+      <h3 style="color:#dc2626">删除确认</h3>
+      <p style="font-size:13px;color:#475569;line-height:1.7">确定要删除此条<b>${kindLabel}</b>吗？<br>删除后该条目将从所有人视图中隐藏，已填报的评分数据保留但不再计入统计。</p>
+      <div class="actions" style="margin-top:16px">
+        <button class="btn-ghost" onclick="_mgmtClose()">取消</button>
+        <button class="btn-primary" style="background:var(--err)" onclick="window._mgmtDelete('${kind}','${ek}')">确认删除</button>
+      </div>
+    </div>
+  </div>`;
+};
+
+window._mgmtDelete = async function(kind, ek) {
+  const mgmt = window[ek];
+  if (!mgmt) return;
+  try {
+    const body = {
+      custom_id: mgmt.isCustom ? mgmt.customId : null,
+      orig_idx:  mgmt.isCustom ? null : mgmt.origIdx,
+    };
+    if (kind === "core") await API.manageOppDelete(body);
+    else                  await API.manageTaskDelete(body);
+    _mgmtClose();
+    const fresh = await API.fetchState();
+    state.customOpps    = fresh.customOpps    || [];
+    state.customTasks   = fresh.customTasks   || [];
+    state.oppOverrides  = fresh.oppOverrides  || {};
+    state.taskOverrides = fresh.taskOverrides || {};
+    render();
+    toast("已删除","ok");
+  } catch(e) { _apiError("删除失败", e); }
 };
 
 // 还原用户编辑过的里程碑文本

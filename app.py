@@ -200,7 +200,57 @@ def build_state():
         dim_a["公司"].setdefault(r["month"], {})
         dim_a["公司"][r["month"]][r["metric_name"]] = r["value"]
 
-    return {"oppFill": opp_fill, "taskFill": task_fill, "dimAActual": dim_a}
+    # ── 自定义任务项 ──
+    custom_opps_rows  = query("SELECT * FROM custom_opps ORDER BY id")
+    custom_opp_ms     = query("SELECT * FROM custom_opp_milestones")
+    custom_tasks_rows = query("SELECT * FROM custom_tasks ORDER BY id")
+    custom_task_ms    = query("SELECT * FROM custom_task_milestones")
+    opp_ovr_rows      = query("SELECT * FROM opp_overrides")
+    task_ovr_rows     = query("SELECT * FROM task_overrides")
+
+    co_ms = {}
+    for r in (custom_opp_ms or []):
+        co_ms.setdefault(r["custom_opp_id"], {})[r["month"]] = r["milestone_text"]
+    custom_opps = []
+    for r in (custom_opps_rows or []):
+        custom_opps.append({
+            "id": r["id"], "dept": r["dept"], "客户": r["客户"],
+            "opp_type": r["opp_type"], "归类说明": r["归类说明"] or "",
+            "系数": float(r["系数"] or 1.2),
+            "milestones": co_ms.get(r["id"], {}),
+            "deleted": bool(r["deleted"]),
+        })
+
+    ct_ms = {}
+    for r in (custom_task_ms or []):
+        ct_ms.setdefault(r["custom_task_id"], {})[r["month"]] = r["milestone_text"]
+    custom_tasks = []
+    for r in (custom_tasks_rows or []):
+        custom_tasks.append({
+            "id": r["id"], "dept": r["dept"], "描述": r["描述"],
+            "等级": r["等级"], "系数": float(r["系数"] or 1.0),
+            "业务线": r["业务线"] or "", "期望完成": r["期望完成"] or "",
+            "完成情况": r["完成情况"] or "",
+            "milestones": ct_ms.get(r["id"], {}),
+            "deleted": bool(r["deleted"]),
+        })
+
+    opp_overrides = {}
+    for r in (opp_ovr_rows or []):
+        opp_overrides[r["opp_idx"]] = {
+            k: r[k] for k in ("客户", "opp_type", "归类说明", "deleted") if r.get(k) is not None
+        }
+    task_overrides = {}
+    for r in (task_ovr_rows or []):
+        task_overrides[r["task_idx"]] = {
+            k: r[k] for k in ("描述", "等级", "业务线", "期望完成", "完成情况", "deleted") if r.get(k) is not None
+        }
+
+    return {
+        "oppFill": opp_fill, "taskFill": task_fill, "dimAActual": dim_a,
+        "customOpps": custom_opps, "customTasks": custom_tasks,
+        "oppOverrides": opp_overrides, "taskOverrides": task_overrides,
+    }
 
 
 # ─────────────────── 路由：首页（SSI 注入）───────────────────
@@ -534,6 +584,176 @@ def api_reset():
         execute(f"DELETE FROM {tbl}")
     # dim_a_actual 只清除非系统默认的行（有 updated_by != 'system' 的行被视为用户填写）
     execute("DELETE FROM dim_a_actual WHERE updated_by != 'system'")
+    return jsonify({"ok": True})
+
+
+# ─────────────────── 路由：任务管理（仅数据管理员）───────────────────
+def manage_required(f):
+    @wraps(f)
+    def w(*a, **kw):
+        u = current_user()
+        if not u:
+            return jsonify({"error": "未登录"}), 401
+        if not u.get("can_manage_data"):
+            return jsonify({"error": "仅数据管理员可执行此操作"}), 403
+        request.user = u
+        return f(*a, **kw)
+    return w
+
+
+@app.route("/api/manage/opp", methods=["POST"])
+@manage_required
+def api_manage_opp_save():
+    b = request.get_json(force=True, silent=True) or {}
+    custom_id = b.get("custom_id")
+    orig_idx  = b.get("orig_idx")
+    dept      = b.get("dept", "")
+    ke_hu     = b.get("客户", "")
+    opp_type  = b.get("opp_type", "other")
+    gui_lei   = b.get("归类说明", "")
+    xi_shu    = float(b.get("系数", 1.2))
+    milestones = b.get("milestones", {})
+    u = request.user["u"]
+
+    if orig_idx is not None:
+        execute(
+            """INSERT INTO opp_overrides (opp_idx, 客户, opp_type, 归类说明, deleted, updated_by, updated_at)
+               VALUES (%s, %s, %s, %s, FALSE, %s, NOW())
+               ON CONFLICT (opp_idx) DO UPDATE SET
+                 客户=EXCLUDED.客户, opp_type=EXCLUDED.opp_type,
+                 归类说明=EXCLUDED.归类说明, deleted=FALSE,
+                 updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
+            (orig_idx, ke_hu, opp_type, gui_lei, u),
+        )
+        return jsonify({"ok": True, "orig_idx": orig_idx})
+
+    if custom_id is not None:
+        execute(
+            "UPDATE custom_opps SET dept=%s, 客户=%s, opp_type=%s, 归类说明=%s, 系数=%s WHERE id=%s",
+            (dept, ke_hu, opp_type, gui_lei, xi_shu, custom_id),
+        )
+        execute("DELETE FROM custom_opp_milestones WHERE custom_opp_id=%s", (custom_id,))
+        for month, text in milestones.items():
+            if text:
+                execute(
+                    "INSERT INTO custom_opp_milestones (custom_opp_id, month, milestone_text) VALUES (%s,%s,%s)",
+                    (custom_id, month, text),
+                )
+        return jsonify({"ok": True, "custom_id": custom_id})
+
+    row = query(
+        "INSERT INTO custom_opps (dept, 客户, opp_type, 归类说明, 系数, created_by) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
+        (dept, ke_hu, opp_type, gui_lei, xi_shu, u), one=True,
+    )
+    new_id = row["id"]
+    for month, text in milestones.items():
+        if text:
+            execute(
+                "INSERT INTO custom_opp_milestones (custom_opp_id, month, milestone_text) VALUES (%s,%s,%s)",
+                (new_id, month, text),
+            )
+    return jsonify({"ok": True, "custom_id": new_id})
+
+
+@app.route("/api/manage/opp", methods=["DELETE"])
+@manage_required
+def api_manage_opp_delete():
+    b = request.get_json(force=True, silent=True) or {}
+    custom_id = b.get("custom_id")
+    orig_idx  = b.get("orig_idx")
+    u = request.user["u"]
+    if orig_idx is not None:
+        execute(
+            """INSERT INTO opp_overrides (opp_idx, deleted, updated_by, updated_at)
+               VALUES (%s, TRUE, %s, NOW())
+               ON CONFLICT (opp_idx) DO UPDATE SET deleted=TRUE,
+                 updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
+            (orig_idx, u),
+        )
+    elif custom_id is not None:
+        execute("UPDATE custom_opps SET deleted=TRUE WHERE id=%s", (custom_id,))
+    else:
+        return jsonify({"error": "缺少参数"}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/manage/task", methods=["POST"])
+@manage_required
+def api_manage_task_save():
+    b = request.get_json(force=True, silent=True) or {}
+    custom_id  = b.get("custom_id")
+    orig_idx   = b.get("orig_idx")
+    dept       = b.get("dept", "")
+    miao_shu   = b.get("描述", "")
+    deng_ji    = b.get("等级", "B")
+    xi_shu     = float(b.get("系数", 1.0))
+    ye_wu_xian = b.get("业务线", "")
+    qi_wang    = b.get("期望完成", "")
+    wan_cheng  = b.get("完成情况", "")
+    milestones = b.get("milestones", {})
+    u = request.user["u"]
+
+    if orig_idx is not None:
+        execute(
+            """INSERT INTO task_overrides (task_idx, 描述, 等级, 业务线, 期望完成, 完成情况, deleted, updated_by, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
+               ON CONFLICT (task_idx) DO UPDATE SET
+                 描述=EXCLUDED.描述, 等级=EXCLUDED.等级,
+                 业务线=EXCLUDED.业务线, 期望完成=EXCLUDED.期望完成,
+                 完成情况=EXCLUDED.完成情况, deleted=FALSE,
+                 updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
+            (orig_idx, miao_shu, deng_ji, ye_wu_xian, qi_wang, wan_cheng, u),
+        )
+        return jsonify({"ok": True, "orig_idx": orig_idx})
+
+    if custom_id is not None:
+        execute(
+            "UPDATE custom_tasks SET dept=%s, 描述=%s, 等级=%s, 系数=%s, 业务线=%s, 期望完成=%s, 完成情况=%s WHERE id=%s",
+            (dept, miao_shu, deng_ji, xi_shu, ye_wu_xian, qi_wang, wan_cheng, custom_id),
+        )
+        execute("DELETE FROM custom_task_milestones WHERE custom_task_id=%s", (custom_id,))
+        for month, text in milestones.items():
+            if text:
+                execute(
+                    "INSERT INTO custom_task_milestones (custom_task_id, month, milestone_text) VALUES (%s,%s,%s)",
+                    (custom_id, month, text),
+                )
+        return jsonify({"ok": True, "custom_id": custom_id})
+
+    row = query(
+        """INSERT INTO custom_tasks (dept, 描述, 等级, 系数, 业务线, 期望完成, 完成情况, created_by)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+        (dept, miao_shu, deng_ji, xi_shu, ye_wu_xian, qi_wang, wan_cheng, u), one=True,
+    )
+    new_id = row["id"]
+    for month, text in milestones.items():
+        if text:
+            execute(
+                "INSERT INTO custom_task_milestones (custom_task_id, month, milestone_text) VALUES (%s,%s,%s)",
+                (new_id, month, text),
+            )
+    return jsonify({"ok": True, "custom_id": new_id})
+
+
+@app.route("/api/manage/task", methods=["DELETE"])
+@manage_required
+def api_manage_task_delete():
+    b = request.get_json(force=True, silent=True) or {}
+    custom_id = b.get("custom_id")
+    orig_idx  = b.get("orig_idx")
+    u = request.user["u"]
+    if orig_idx is not None:
+        execute(
+            """INSERT INTO task_overrides (task_idx, deleted, updated_by, updated_at)
+               VALUES (%s, TRUE, %s, NOW())
+               ON CONFLICT (task_idx) DO UPDATE SET deleted=TRUE,
+                 updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
+            (orig_idx, u),
+        )
+    elif custom_id is not None:
+        execute("UPDATE custom_tasks SET deleted=TRUE WHERE id=%s", (custom_id,))
+    else:
+        return jsonify({"error": "缺少参数"}), 400
     return jsonify({"ok": True})
 
 
