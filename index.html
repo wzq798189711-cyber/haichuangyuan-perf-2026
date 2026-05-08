@@ -1215,8 +1215,12 @@ function renderDashboard() {
       const actual = getDimAActual(metric.名称, m);
       if (actual == null) return null;
       const mTgt = _getMonthlyTarget(metric.名称, m);
-      if (mTgt == null) return null;
-      return Math.max(0, reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt);
+      if (mTgt != null) {
+        return Math.max(0, reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt);
+      }
+      // 无月度目标时（如OPC接单金额低月份）回退到年度目标
+      if (!target) return null;
+      return Math.max(0, reverse ? target/Math.max(actual,0.01) : actual/target);
     }
   }).filter(r => r != null);
   const dimARate = aRates.length ? Math.max(0, aRates.reduce((a,b)=>a+b,0)/aRates.length) : null;

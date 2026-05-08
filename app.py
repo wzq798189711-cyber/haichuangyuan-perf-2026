@@ -127,6 +127,18 @@ def gm_required(f):
     return w
 
 
+# ─────────────────── 账号权限初始化 ───────────────────
+# 发布到生产时，新列默认值为 false，此函数在每次启动时确保关键权限正确
+_CAN_MANAGE_ACCOUNTS = ["wangzhaoqian"]
+
+def ensure_account_permissions():
+    for u in _CAN_MANAGE_ACCOUNTS:
+        execute(
+            "UPDATE accounts SET can_manage_data = TRUE WHERE u = %s AND (can_manage_data IS NULL OR can_manage_data = FALSE)",
+            (u,),
+        )
+
+
 # ─────────────────── 财报默认值初始化 ───────────────────
 def ensure_finance_defaults():
     """若 system_config 中 fin_report_ver 与当前版本不符，则向 dim_a_actual 补填缺失数据。"""
@@ -264,6 +276,7 @@ def index():
     with open("index.html", "r", encoding="utf-8") as f:
         html = f.read()
     user = current_user()
+    ensure_account_permissions()
     ensure_finance_defaults()
     state = build_state() if user else {}
     session_payload = _session_payload(user) if user else None
@@ -765,5 +778,6 @@ def static_files(p):
 
 if __name__ == "__main__":
     with app.app_context():
+        ensure_account_permissions()
         ensure_finance_defaults()
     app.run(host="0.0.0.0", port=5000, debug=False)
