@@ -85,7 +85,8 @@ def _session_payload(row):
     return {
         "u": row["u"], "name": row["name"], "org": row["org"],
         "title": row["title"], "role": row["role"], "scope": row["scope"],
-        "canEditDimA": bool(row["can_edit_dim_a"]),
+        "canEditDimA":    bool(row["can_edit_dim_a"]),
+        "canManageData":  bool(row["can_manage_data"]),
     }
 
 
@@ -94,7 +95,8 @@ def current_user():
     if not token:
         return None
     return query(
-        """SELECT a.u, a.name, a.org, a.title, a.role, a.scope, a.can_edit_dim_a
+        """SELECT a.u, a.name, a.org, a.title, a.role, a.scope,
+                  a.can_edit_dim_a, a.can_manage_data
            FROM sessions s JOIN accounts a ON a.u = s.u
            WHERE s.token = %s AND s.expires_at > NOW()""",
         (token,), one=True,

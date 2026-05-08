@@ -569,7 +569,8 @@ if (!SESSION) {
 // role: GM / LEAD / STAFF；scope: 部门名或 null(全览)
 const SESS_ROLE = (SESSION && SESSION.role) || "STAFF";
 const SESS_SCOPE = (SESSION && SESSION.scope) || null;     // 对非GM：本部门（销售部/研发交付部/…）
-const SESS_CAN_EDIT_DIMA = !!(SESSION && SESSION.canEditDimA);
+const SESS_CAN_EDIT_DIMA    = !!(SESSION && SESSION.canEditDimA);
+const SESS_CAN_MANAGE_DATA  = !!(SESSION && SESSION.canManageData);
 const IS_GM = SESS_ROLE === "GM";                           // 公司领导全览
 const IS_LEAD = SESS_ROLE === "LEAD";
 const IS_STAFF = SESS_ROLE === "STAFF";
@@ -767,6 +768,28 @@ const GRADE_COEF = { A:1.2, B:1.0, C:0.8 };
 const SCORE_OPTS = DATA.score_options;
 const DUP_IDX = new Set(DATA.dup_task_idx);
 const TYPE_LABELS = DATA.opp_type_labels;
+
+// ===== 月度目标数据（来源：2026年度经营计划附件 附件1 指标分解）=====
+const MONTHLY_TARGETS = {
+  "营业收入":    {"1月":18.05,"2月":18.05,"3月":270.69,"4月":354.14,"5月":354.14,"6月":354.14,"7月":226.14,"8月":256.14,"9月":256.14,"10月":258.81,"11月":258.81,"12月":258.81},
+  "利润总额":    {"1月":-69.62,"2月":-66.69,"3月":39.86,"4月":56.79,"5月":25.35,"6月":27.27,"7月":-51.41,"8月":30.32,"9月":28.07,"10月":23.60,"11月":32.24,"12月":-74.75},
+  "销管研费用":  {"1月":78.64,"2月":73.34,"3月":79.96,"4月":83.53,"5月":83.81,"6月":82.01,"7月":135.42,"8月":83.84,"9月":85.91,"10月":95.87,"11月":87.20,"12月":194.18},
+  "成本费用总额":{"1月":87.67,"2月":84.73,"3月":230.83,"4月":297.35,"5月":328.80,"6月":326.87,"7月":277.55,"8月":225.82,"9月":228.07,"10月":235.20,"11月":226.57,"12月":333.55},
+  "经营活动产生的现金流量净额":{"1月":-78.58,"2月":-86.10,"3月":-83.35,"4月":-119.74,"5月":-64.68,"6月":-9.08,"7月":45.68,"8月":143.73,"9月":94.34,"10月":-16.20,"11月":90.90,"12月":97.26},
+  "销售回款":    {"1月":0.00,"2月":0.00,"3月":18.23,"4月":101.24,"5月":235.93,"6月":352.78,"7月":439.71,"8月":501.51,"9月":365.51,"10月":182.33,"11月":409.03,"12月":395.14},
+  "经营性净现金流利润（净利润+非付现）":{"1月":-68.52,"2月":-65.59,"3月":40.96,"4月":57.89,"5月":26.45,"6月":28.37,"7月":-50.31,"8月":31.42,"9月":29.17,"10月":24.70,"11月":33.34,"12月":-73.60},
+  "签约渠道":    {"1月":3,"2月":2,"3月":5,"4月":5,"5月":3,"6月":5,"7月":5,"8月":5,"9月":2,"10月":1,"11月":2,"12月":2},
+  "OPC接单金额": {"7月":70.83,"8月":70.83,"9月":70.83,"10月":70.83,"11月":70.83,"12月":70.83},
+  "年度实现毛利":{"1月":10.22,"2月":7.94,"3月":121.32,"4月":142.78,"5月":112.78,"6月":112.78,"7月":87.28,"8月":117.28,"9月":117.28,"10月":122.77,"11月":122.77,"12月":122.77},
+  "生态联盟年度新增签约":{"6月":1,"9月":1,"12月":2},
+};
+function _getMonthlyTarget(name, month) {
+  if (MONTHLY_TARGETS[name] != null) return MONTHLY_TARGETS[name][month] ?? null;
+  for (const key of Object.keys(MONTHLY_TARGETS)) {
+    if (name.includes("OPC") && key.includes("OPC")) return MONTHLY_TARGETS[key][month] ?? null;
+  }
+  return null;
+}
 
 const DEPT_ALIASES = {
   "销售部-1": ["销售部-1"],
@@ -970,8 +993,7 @@ function fmtNum(v) {
   if (v == null || v === "") return "—";
   const n = parseFloat(v);
   if (isNaN(n)) return v;
-  if (Math.abs(n) >= 10) return n.toLocaleString(undefined,{maximumFractionDigits:2});
-  return n.toString();
+  return n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2});
 }
 
 function renderDashboard() {
@@ -1014,17 +1036,35 @@ function renderDashboard() {
     const reverse = metric.名称.includes("费用") || metric.名称.includes("成本");
     let ratio = null;
     if (target && actual != null) ratio = reverse ? target/Math.max(actual,0.01) : actual/target;
-    const rp = ratio == null ? "—" : (Math.min(ratio,1.2)*100).toFixed(1) + "%";
+    const rp = ratio == null ? "—" : (Math.min(ratio,1.5)*100).toFixed(1) + "%";
     const actualDisp = actual == null ? "—" : fmtNum(actual);
     const valCls = String(actualDisp).length > 7 ? "small" : "";
+    const unitSuffix = metric.单位 || "";
+    // 月度目标及月度完成率
+    const mTgt = isCum ? null : _getMonthlyTarget(metric.名称, m);
+    let mRatio = null;
+    if (!isCum && mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
+    const mRp = mRatio == null ? "—" : (Math.min(mRatio,1.5)*100).toFixed(1) + "%";
+    const mRpColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
+    // 年度累计完成率（当月视图额外显示）
+    let annualRp = "—";
+    if (!isCum) {
+      const cumA = getDimAActualCumulative(metric.名称);
+      if (target && cumA != null) {
+        const cr = reverse ? target/Math.max(cumA,0.01) : cumA/target;
+        annualRp = (Math.min(cr,1.5)*100).toFixed(1) + "%";
+      }
+    }
     html += `<div class="hero-kpi ${heroColors[i%5]}" onclick="window.openMetricDrawer('${encodeURIComponent(metric.名称)}')">
       <div class="h-chev">›</div>
       <div class="h-tag">${metric.类别==="业绩类指标"?"业绩·考核":"任务·考核"}${reverse?" · 逆向":""}</div>
       <div class="h-lbl">${metric.名称}</div>
-      <div class="h-val ${valCls}">${actualDisp}<span class="h-unit">${metric.单位||""}</span></div>
+      <div class="h-val ${valCls}">${actualDisp}<span class="h-unit">${unitSuffix}</span></div>
       <div class="h-sub">
-        <span>${isCum?"年度目标":"月度关注"} ${fmtNum(metric.目标值)}${metric.单位||""}</span>
-        <span><b style="font-size:13px">${rp}</b></span>
+        ${isCum
+          ? `<span>年度目标 ${fmtNum(target)}${unitSuffix}</span><span><b style="font-size:13px">${rp}</b></span>`
+          : `<span>月度目标 ${mTgt!=null?fmtNum(mTgt):"—"}${unitSuffix} · <b style="color:${mRpColor}">${mRp}</b></span><span>年度累计 <b>${annualRp}</b></span>`
+        }
       </div>
       <div class="h-prog"><div style="width:${ratio==null?0:Math.min(100,ratio*100)}%"></div></div>
     </div>`;
@@ -1047,10 +1087,21 @@ function renderDashboard() {
     const barColor = ratio == null ? "#cbd5e1" : ratio>=1 ? "var(--ok)" : ratio>=0.8 ? "var(--warn)" : "var(--err)";
     const unitSuffix = metric.单位 && metric.单位!=="/" ? " "+metric.单位 : "";
     const actualDisp = actual == null ? "未填报" : fmtNum(actual)+unitSuffix;
+    // 月度目标及完成率
+    const mTgt = isCum ? null : _getMonthlyTarget(metric.名称, m);
+    let mRatio = null;
+    if (!isCum && mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
+    const mRpStr = mRatio == null ? "—" : (Math.min(mRatio,1.5)*100).toFixed(1)+"%";
+    const mRpColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
+    // 年度完成率
+    const annRpStr = ratio == null ? "—" : (Math.min(ratio,1.5)*100).toFixed(1)+"%";
+    const annRpColor = ratio==null?"#94a3b8":ratio>=1?"var(--ok)":ratio>=0.8?"var(--warn)":"var(--err)";
     html += `<div class="mini-kpi ${reverse?'reverse':''}" onclick="window.openMetricDrawer('${encodeURIComponent(metric.名称)}')">
       <div class="mk-lbl">${metric.名称}</div>
       <div class="mk-val ${actual==null?'unfilled':''}">${actualDisp}</div>
-      <div class="mk-target">目标：${fmtNum(metric.目标值)}${unitSuffix}</div>
+      <div class="mk-target">
+        ${!isCum && mTgt!=null ? `月度目标：${fmtNum(mTgt)}${unitSuffix} <b style="color:${mRpColor}">${mRpStr}</b><br>` : ""}年度目标：${fmtNum(metric.目标值)}${unitSuffix} <b style="color:${annRpColor}">${annRpStr}</b>
+      </div>
       <div class="mk-bar"><div style="width:${barW}%;background:${barColor}"></div></div>
     </div>`;
   });
@@ -1068,7 +1119,12 @@ function renderDashboard() {
   const deptScores = DEPTS.map(d => {
     const r = isCum ? computeDimBCumulative(d) : (() => {
       const x = computeDimB(d, m);
-      return { coreScore:x.coreScore, spScore:x.specialScore, dimB:x.dimB, coreCnt:x.core.length, spCnt:x.special.length };
+      const coreScoredCnt   = x.core.filter(({idx}) => getItemScore("core",idx,m) != null).length;
+      const coreCompleteCnt = x.core.filter(({idx}) => getItemScore("core",idx,m) === 100).length;
+      const spScoredCnt     = x.special.filter(({idx}) => getItemScore("special",idx,m) != null).length;
+      const spCompleteCnt   = x.special.filter(({idx}) => getItemScore("special",idx,m) === 100).length;
+      return { coreScore:x.coreScore, spScore:x.specialScore, dimB:x.dimB, coreCnt:x.core.length, spCnt:x.special.length,
+               coreScoredCnt, coreCompleteCnt, spScoredCnt, spCompleteCnt };
     })();
     const w = weightOf(d, m);
     return { dept:d, ...r, w };
@@ -1077,8 +1133,12 @@ function renderDashboard() {
     const arr = deptScores.filter(d=>d.dimB!=null).map(d=>d.dimB);
     return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
   })();
-  const totalCore = deptScores.reduce((a,d)=>a+d.coreCnt,0);
-  const totalSp = deptScores.reduce((a,d)=>a+d.spCnt,0);
+  const totalCore           = deptScores.reduce((a,d)=>a+d.coreCnt,0);
+  const totalSp             = deptScores.reduce((a,d)=>a+d.spCnt,0);
+  const totalCoreScoredCnt  = deptScores.reduce((a,d)=>a+(d.coreScoredCnt||0),0);
+  const totalCoreCompleteCnt= deptScores.reduce((a,d)=>a+(d.coreCompleteCnt||0),0);
+  const totalSpScoredCnt    = deptScores.reduce((a,d)=>a+(d.spScoredCnt||0),0);
+  const totalSpCompleteCnt  = deptScores.reduce((a,d)=>a+(d.spCompleteCnt||0),0);
 
   html += `<div class="section-hd">
     <h3>📈 维度 A / B 综合完成情况</h3>
@@ -1086,14 +1146,18 @@ function renderDashboard() {
     <span class="shd-line"></span>
   </div>`;
   // 维度B 仪表：GM 看 5 部门均值；非GM 看本部门聚合（销售部-1/-2 合并为销售部）
-  let gCore, gSp, gDimB, gScope, gCoreCnt, gSpCnt;
+  let gCore, gSp, gDimB, gScope, gCoreCnt, gSpCnt, gCoreScoredCnt, gCoreCompleteCnt, gSpScoredCnt, gSpCompleteCnt;
   if (IS_GM) {
     gCore = (() => { const a = deptScores.filter(d=>d.coreScore!=null).map(d=>d.coreScore); return a.length?a.reduce((x,y)=>x+y,0)/a.length:null; })();
     gSp   = (() => { const a = deptScores.filter(d=>d.spScore!=null).map(d=>d.spScore); return a.length?a.reduce((x,y)=>x+y,0)/a.length:null; })();
     gDimB = avgDimB;
     gScope = "5 部门均值";
-    gCoreCnt = totalCore;
-    gSpCnt = totalSp;
+    gCoreCnt         = totalCore;
+    gSpCnt           = totalSp;
+    gCoreScoredCnt   = totalCoreScoredCnt;
+    gCoreCompleteCnt = totalCoreCompleteCnt;
+    gSpScoredCnt     = totalSpScoredCnt;
+    gSpCompleteCnt   = totalSpCompleteCnt;
   } else {
     // 本部门（若为销售部，聚合 销售部-1 + 销售部-2）
     const myDepts = (SESS_SCOPE === "销售部") ? ["销售部-1","销售部-2"] : [SESS_SCOPE];
@@ -1105,8 +1169,12 @@ function renderDashboard() {
     gSp   = spArr.length   ? spArr.reduce((x,y)=>x+y,0)/spArr.length     : null;
     gDimB = dimBArr.length ? dimBArr.reduce((x,y)=>x+y,0)/dimBArr.length : null;
     gScope = "本部门（" + SESS_SCOPE + "）";
-    gCoreCnt = mine.reduce((a,d)=>a+d.coreCnt,0);
-    gSpCnt = mine.reduce((a,d)=>a+d.spCnt,0);
+    gCoreCnt         = mine.reduce((a,d)=>a+d.coreCnt,0);
+    gSpCnt           = mine.reduce((a,d)=>a+d.spCnt,0);
+    gCoreScoredCnt   = mine.reduce((a,d)=>a+(d.coreScoredCnt||0),0);
+    gCoreCompleteCnt = mine.reduce((a,d)=>a+(d.coreCompleteCnt||0),0);
+    gSpScoredCnt     = mine.reduce((a,d)=>a+(d.spScoredCnt||0),0);
+    gSpCompleteCnt   = mine.reduce((a,d)=>a+(d.spCompleteCnt||0),0);
   }
   // 顺序：① 维度A（主·蓝），② 维度B综合（主·深蓝），③+④ 维度B 两个子分项（小卡·灰底框）
   html += `<div class="gauge-row-primary">
@@ -1143,16 +1211,16 @@ function renderDashboard() {
       <div class="g-title"><b>维度 B · 核心攻坚项</b> 50% · ${periodLabel}</div>
       ${renderGaugeSVG(gCore, gCore==null?"—":gCore.toFixed(1), '--accent')}
       <div class="g-legend">
-        <div>条目<b>${gCoreCnt}</b></div>
-        <div>系数<b>1.2</b></div>
+        <div>共<b>${gCoreCnt}</b>条 · 已评<b>${isCum?"—":gCoreScoredCnt}</b> · 满分<b>${isCum?"—":gCoreCompleteCnt}</b></div>
+        <div>系数 <b>1.2</b>（核心攻坚项）</div>
       </div>
     </div>
     <div class="gauge-card is-sub" onclick="window.setTab('special')">
       <div class="g-title"><b>维度 B · 专项任务项</b> 50% · ${periodLabel}</div>
       ${renderGaugeSVG(gSp, gSp==null?"—":gSp.toFixed(1), '--brand')}
       <div class="g-legend">
-        <div>条目<b>${gSpCnt}</b></div>
-        <div>系数<b>A1.2/B1.0/C0.8</b></div>
+        <div>共<b>${gSpCnt}</b>条 · 已评<b>${isCum?"—":gSpScoredCnt}</b> · 满分<b>${isCum?"—":gSpCompleteCnt}</b></div>
+        <div>系数 <b>A1.2 / B1.0 / C0.8</b>（专项任务）</div>
       </div>
     </div>
   </div>`;
@@ -1219,15 +1287,15 @@ function renderDashboard() {
 
 function renderGaugeSVG(val, label, colorVar) {
   const w=200, h=115, cx=100, cy=100, r=80;
-  const v = val==null ? 0 : Math.max(0, Math.min(120, val));
-  const maxV = 120;
+  const v = val==null ? 0 : Math.max(0, Math.min(100, val));
+  const maxV = 100;
   const startA = Math.PI, endA = 2*Math.PI;
   const angle = startA + (endA - startA) * (v / maxV);
   const ex = cx + r*Math.cos(angle), ey = cy + r*Math.sin(angle);
   const bgArc = `M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${cx+r} ${cy}`;
   const fgArc = val==null ? "" : `M ${cx-r} ${cy} A ${r} ${r} 0 0 1 ${ex} ${ey}`;
   const labelColor = val==null ? '#cbd5e1' : `var(${colorVar})`;
-  const ticks = [0,30,60,90,120].map(t => {
+  const ticks = [0,25,50,75,100].map(t => {
     const a = startA + (endA-startA)*(t/maxV);
     const x1 = cx + (r-5)*Math.cos(a), y1 = cy + (r-5)*Math.sin(a);
     const x2 = cx + (r+4)*Math.cos(a), y2 = cy + (r+4)*Math.sin(a);
@@ -1251,7 +1319,7 @@ function renderTrendSVG() {
     return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
   });
   const w=800, h=160, pad=30;
-  const maxV=120;
+  const maxV=100;
   const step = (w-2*pad)/(MONTHS.length-1);
   let path="", dots="";
   pts.forEach((v,i) => {
@@ -1262,7 +1330,7 @@ function renderTrendSVG() {
              <text x="${x}" y="${h-8}" text-anchor="middle" font-size="11" fill="#64748b">${MONTHS[i]}</text>
              <text x="${x}" y="${y-10}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--brand)">${v==null?"—":v.toFixed(1)}</text>`;
   });
-  const grid = [0,30,60,90,120].map(v => {
+  const grid = [0,25,50,75,100].map(v => {
     const y = h - pad - v/maxV*(h-2*pad);
     return `<line x1="${pad}" y1="${y}" x2="${w-pad}" y2="${y}" stroke="#eef1f5"/>
             <text x="${pad-6}" y="${y+3}" text-anchor="end" font-size="10" fill="#94a3b8">${v}</text>`;
@@ -1437,16 +1505,27 @@ window.openMetricDrawer = function(nameEnc) {
   if (!metric) return;
   const target = parseFloat(metric.目标值) || null;
   const reverse = name.includes("费用") || name.includes("成本");
+  let _cumActual = 0, _cumHas = false;
   const rows = YEAR_MONTHS.map(mo => {
     const actual = getDimAActual(name, mo);
-    let ratio = null;
-    if (target && actual != null) ratio = reverse ? target/Math.max(actual,0.01) : actual/target;
-    const rp = ratio == null ? "—" : (Math.min(ratio,1.2)*100).toFixed(1)+"%";
-    const color = ratio==null ? "#94a3b8" : ratio>=1 ? "var(--ok)" : ratio>=0.8 ? "var(--warn)" : "var(--err)";
+    const mTgt = _getMonthlyTarget(name, mo);
+    // 月度完成率
+    let mRatio = null;
+    if (mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
+    const mRp = mRatio == null ? "—" : (Math.min(mRatio,1.5)*100).toFixed(1)+"%";
+    const mColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
+    // 年度累计完成率
+    if (actual != null) { _cumActual += actual; _cumHas = true; }
+    let yrRatio = null;
+    if (target && _cumHas) yrRatio = reverse ? target/Math.max(_cumActual,0.01) : _cumActual/target;
+    const yrRp = yrRatio == null ? "—" : (Math.min(yrRatio,1.5)*100).toFixed(1)+"%";
+    const yrColor = yrRatio==null?"#94a3b8":yrRatio>=1?"var(--ok)":yrRatio>=0.8?"var(--warn)":"var(--err)";
     return `<tr>
       <td style="font-weight:600">${mo}</td>
+      <td style="color:#64748b">${mTgt!=null?fmtNum(mTgt):"—"}</td>
       <td>${actual==null?'<span style="color:#cbd5e1">未填报</span>':fmtNum(actual)}</td>
-      <td style="color:${color};font-weight:700">${rp}</td>
+      <td style="color:${mColor};font-weight:700">${mRp}</td>
+      <td style="color:${yrColor};font-weight:700">${yrRp}</td>
     </tr>`;
   }).join("");
   const cum = getDimAActualCumulative(name);
@@ -1474,7 +1553,7 @@ window.openMetricDrawer = function(nameEnc) {
         <div class="dr-section">
           <h4>2026 年度月度填报明细</h4>
           <table class="tbl-ct tbl-striped">
-            <thead><tr><th>月份</th><th>当月实际</th><th>完成率</th></tr></thead>
+            <thead><tr><th>月份</th><th>月度目标</th><th>当月实际</th><th>月度完成</th><th>年度完成率</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
           <div style="font-size:11px;color:var(--mute);margin-top:10px;line-height:1.7">
@@ -1983,13 +2062,6 @@ function renderRules() {
     </ol>
   </div>
 
-  <div class="card"><h2>🎯 核心攻坚项 · 10 大类型分布</h2>
-    <table class="tbl-ct">
-      <thead><tr><th style="text-align:left">类型</th><th>数量</th></tr></thead>
-      <tbody>${typeRows}</tbody>
-    </table>
-  </div>
-
   <div class="card"><h2>⚖️ 3-6月部门权重（A/B）</h2>
     <table class="tbl-ct">
       <thead><tr><th style="text-align:left">部门</th>${MONTHS.map(m=>`<th>${m}</th>`).join("")}</tr></thead>
@@ -2078,7 +2150,8 @@ if (_resetBtn) {
   if (!SESSION) return;
   document.getElementById("upName").textContent = SESSION.name;
   const roleLbl = IS_GM ? "全览·GM" : (IS_LEAD ? (SESSION.scope + "·负责人") : (SESSION.scope + "·员工"));
-  document.getElementById("upMeta").textContent = roleLbl + " · " + SESSION.title;
+  const metaEl = document.getElementById("upMeta");
+  metaEl.innerHTML = `${roleLbl} · ${SESSION.title}${SESS_CAN_MANAGE_DATA ? ' <span style="background:#0ea5e9;color:#fff;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:600;vertical-align:middle">数据管理员</span>' : ''}`;
   const ava = document.getElementById("upAvatar");
   ava.textContent = (SESSION.name || "U").slice(-2);  // 取姓名后两字做头像
   document.getElementById("logoutBtn").onclick = async () => {
