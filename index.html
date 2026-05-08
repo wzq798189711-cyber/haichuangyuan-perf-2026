@@ -1115,7 +1115,7 @@ function renderDashboard() {
         ratio = Math.max(0, reverse ? target/Math.max(actual,0.01) : actual/target);
       }
     }
-    const rp = ratio == null ? "—" : (Math.max(0, Math.min(ratio,1.5))*100).toFixed(1) + "%";
+    const rp = ratio == null ? "—" : (Math.max(0, ratio)*100).toFixed(1) + "%";
     const actualDisp = actual == null ? "—" : fmtNum(actual);
     const valCls = String(actualDisp).length > 7 ? "small" : "";
     const unitSuffix = metric.单位 || "";
@@ -1123,7 +1123,7 @@ function renderDashboard() {
     const mTgt = isCum ? null : _getMonthlyTarget(metric.名称, m);
     let mRatio = null;
     if (!isCum && mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
-    const mRp = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1) + "%";
+    const mRp = mRatio == null ? "—" : (Math.max(0, mRatio)*100).toFixed(1) + "%";
     const mRpColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
     // 年度累计完成率（当月视图额外显示）：逆向指标用YTD月度目标累计/YTD实际
     let annualRp = "—";
@@ -1137,7 +1137,7 @@ function renderDashboard() {
         } else {
           cr = target ? Math.max(0, cumA/target) : null;
         }
-        if (cr != null) annualRp = (Math.min(cr,1.5)*100).toFixed(1) + "%";
+        if (cr != null) annualRp = (Math.max(0, cr)*100).toFixed(1) + "%";
       }
     }
     html += `<div class="hero-kpi ${heroColors[i%5]}" onclick="window.openMetricDrawer('${encodeURIComponent(metric.名称)}')">
@@ -1183,10 +1183,10 @@ function renderDashboard() {
     const mTgt = isCum ? null : _getMonthlyTarget(metric.名称, m);
     let mRatio = null;
     if (!isCum && mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
-    const mRpStr = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1)+"%";
+    const mRpStr = mRatio == null ? "—" : (Math.max(0, mRatio)*100).toFixed(1)+"%";
     const mRpColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
     // 年度完成率
-    const annRpStr = ratio == null ? "—" : (Math.max(0, Math.min(ratio,1.5))*100).toFixed(1)+"%";
+    const annRpStr = ratio == null ? "—" : (Math.max(0, ratio)*100).toFixed(1)+"%";
     const annRpColor = ratio==null?"#94a3b8":ratio>=1?"var(--ok)":ratio>=0.8?"var(--warn)":"var(--err)";
     html += `<div class="mini-kpi ${reverse?'reverse':''}" onclick="window.openMetricDrawer('${encodeURIComponent(metric.名称)}')">
       <div class="mk-lbl">${metric.名称}</div>
@@ -1219,7 +1219,7 @@ function renderDashboard() {
       return Math.max(0, reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt);
     }
   }).filter(r => r != null);
-  const dimARate = aRates.length ? Math.min(1.2, Math.max(0, aRates.reduce((a,b)=>a+b,0)/aRates.length)) : null;
+  const dimARate = aRates.length ? Math.max(0, aRates.reduce((a,b)=>a+b,0)/aRates.length) : null;
 
   const deptScores = DEPTS.map(d => {
     const r = isCum ? computeDimBCumulative(d) : (() => {
@@ -1474,7 +1474,7 @@ function renderDimA() {
     const reverse = m_.名称.includes("费用") || m_.名称.includes("成本");
     const hasActual = !isNaN(a) && actual[m_.名称] !== "" && actual[m_.名称] != null;
     const ratio = (!hasActual || !target) ? null : (reverse ? target/Math.max(a,0.01) : a/target);
-    const rp = ratio == null ? "—" : (Math.max(0, Math.min(ratio,1.2))*100).toFixed(1) + "%";
+    const rp = ratio == null ? "—" : (Math.max(0, ratio)*100).toFixed(1) + "%";
     const rateCls = ratio==null ? "r-none" : ratio>=1 ? "r-ok" : ratio>=0.8 ? "r-warn" : "r-err";
     return `<div class="dm-card ${reverse?'reverse':''}">
       <div class="dm-ico">${getIco(m_.名称)}</div>
@@ -1611,7 +1611,7 @@ window.openMetricDrawer = function(nameEnc) {
     // 月度完成率
     let mRatio = null;
     if (mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
-    const mRp = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1)+"%";
+    const mRp = mRatio == null ? "—" : (Math.max(0, mRatio)*100).toFixed(1)+"%";
     const mColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
     // 年度累计完成率：逆向指标用YTD月度目标累计/YTD实际，正向用YTD实际/年度目标
     if (actual != null) { _cumActual += actual; _cumHas = true; _cumTarget += (mTgt || 0); }
@@ -1623,7 +1623,7 @@ window.openMetricDrawer = function(nameEnc) {
         yrRatio = Math.max(0, _cumActual/target);
       }
     }
-    const yrRp = yrRatio == null ? "—" : (Math.min(yrRatio,1.5)*100).toFixed(1)+"%";
+    const yrRp = yrRatio == null ? "—" : (Math.max(0, yrRatio)*100).toFixed(1)+"%";
     const yrColor = yrRatio==null?"#94a3b8":yrRatio>=1?"var(--ok)":yrRatio>=0.8?"var(--warn)":"var(--err)";
     return `<tr>
       <td style="font-weight:600">${mo}</td>
@@ -1658,7 +1658,7 @@ window.openMetricDrawer = function(nameEnc) {
             <dt>单位</dt><dd>${metric.单位||"—"}</dd>
             <dt>年度目标</dt><dd>${fmtNum(metric.目标值)} ${metric.单位||""}</dd>
             <dt>方向</dt><dd>${reverse?'<span class="badge badge-B">逆向（越低越好）</span>':"正向（越高越好）"}</dd>
-            <dt>2026 累计</dt><dd>${cum==null?'<span style="color:#cbd5e1">未填报</span>':fmtNum(cum)+" "+(metric.单位||"")} · 完成率 <b style="color:${cumRatio==null?'#94a3b8':cumRatio>=1?'var(--ok)':cumRatio>=0.8?'var(--warn)':'var(--err)'}">${cumRatio==null?'—':(Math.max(0,Math.min(cumRatio,1.2))*100).toFixed(1)+'%'}</b></dd>
+            <dt>2026 累计</dt><dd>${cum==null?'<span style="color:#cbd5e1">未填报</span>':fmtNum(cum)+" "+(metric.单位||"")} · 完成率 <b style="color:${cumRatio==null?'#94a3b8':cumRatio>=1?'var(--ok)':cumRatio>=0.8?'var(--warn)':'var(--err)'}">${cumRatio==null?'—':(Math.max(0,cumRatio)*100).toFixed(1)+'%'}</b></dd>
             ${metric.备注?`<dt>口径说明</dt><dd style="font-weight:400;color:#475569">${escapeHtml(metric.备注)}</dd>`:""}
           </dl>
         </div>
