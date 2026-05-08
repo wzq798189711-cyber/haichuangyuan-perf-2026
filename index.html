@@ -816,6 +816,12 @@ function _getMonthlyTarget(name, month) {
   }
   return null;
 }
+// 逆向指标年度完成率：已报告月份的月度目标累计（YTD预算）
+function _getYtdBudget(name) {
+  return YEAR_MONTHS
+    .filter(mo => getDimAActual(name, mo) != null)
+    .reduce((sum, mo) => sum + (_getMonthlyTarget(name, mo) || 0), 0);
+}
 
 const DEPT_ALIASES = {
   "销售部-1": ["销售部-1"],
@@ -1101,7 +1107,14 @@ function renderDashboard() {
     const actual = isCum ? getDimAActualCumulative(metric.名称) : getDimAActual(metric.名称, m);
     const reverse = metric.名称.includes("费用") || metric.名称.includes("成本");
     let ratio = null;
-    if (target && actual != null) ratio = reverse ? target/Math.max(actual,0.01) : actual/target;
+    if (target && actual != null) {
+      if (isCum && reverse) {
+        const ytdB = _getYtdBudget(metric.名称);
+        ratio = ytdB > 0 ? Math.max(0, ytdB/Math.max(actual,0.01)) : null;
+      } else {
+        ratio = Math.max(0, reverse ? target/Math.max(actual,0.01) : actual/target);
+      }
+    }
     const rp = ratio == null ? "—" : (Math.max(0, Math.min(ratio,1.5))*100).toFixed(1) + "%";
     const actualDisp = actual == null ? "—" : fmtNum(actual);
     const valCls = String(actualDisp).length > 7 ? "small" : "";
@@ -1112,13 +1125,19 @@ function renderDashboard() {
     if (!isCum && mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
     const mRp = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1) + "%";
     const mRpColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
-    // 年度累计完成率（当月视图额外显示）
+    // 年度累计完成率（当月视图额外显示）：逆向指标用YTD月度目标累计/YTD实际
     let annualRp = "—";
     if (!isCum) {
       const cumA = getDimAActualCumulative(metric.名称);
-      if (target && cumA != null) {
-        const cr = Math.max(0, reverse ? target/Math.max(cumA,0.01) : cumA/target);
-        annualRp = (Math.min(cr,1.5)*100).toFixed(1) + "%";
+      if (cumA != null) {
+        let cr;
+        if (reverse) {
+          const ytdB = _getYtdBudget(metric.名称);
+          cr = ytdB > 0 ? Math.max(0, ytdB/Math.max(cumA,0.01)) : null;
+        } else {
+          cr = target ? Math.max(0, cumA/target) : null;
+        }
+        if (cr != null) annualRp = (Math.min(cr,1.5)*100).toFixed(1) + "%";
       }
     }
     html += `<div class="hero-kpi ${heroColors[i%5]}" onclick="window.openMetricDrawer('${encodeURIComponent(metric.名称)}')">
@@ -1148,7 +1167,14 @@ function renderDashboard() {
     const actual = isCum ? getDimAActualCumulative(metric.名称) : getDimAActual(metric.名称, m);
     const reverse = metric.名称.includes("费用") || metric.名称.includes("成本");
     let ratio = null;
-    if (target && actual != null) ratio = reverse ? target/Math.max(actual,0.01) : actual/target;
+    if (actual != null) {
+      if (isCum && reverse) {
+        const ytdB = _getYtdBudget(metric.名称);
+        ratio = ytdB > 0 ? Math.max(0, ytdB/Math.max(actual,0.01)) : null;
+      } else if (target) {
+        ratio = Math.max(0, reverse ? target/Math.max(actual,0.01) : actual/target);
+      }
+    }
     const barW = ratio == null ? 0 : Math.min(100, ratio*100);
     const barColor = ratio == null ? "#cbd5e1" : ratio>=1 ? "var(--ok)" : ratio>=0.8 ? "var(--warn)" : "var(--err)";
     const unitSuffix = metric.单位 && metric.单位!=="/" ? " "+metric.单位 : "";
@@ -1175,10 +1201,23 @@ function renderDashboard() {
 
   const aRates = FIVE_KAO.map(metric => {
     const target = parseFloat(metric.目标值) || null;
-    const actual = isCum ? getDimAActualCumulative(metric.名称) : getDimAActual(metric.名称, m);
     const reverse = metric.名称.includes("费用") || metric.名称.includes("成本");
-    if (!target || actual == null) return null;
-    return Math.max(0, reverse ? target/Math.max(actual,0.01) : actual/target);
+    if (!target) return null;
+    if (isCum) {
+      const actual = getDimAActualCumulative(metric.名称);
+      if (actual == null) return null;
+      if (reverse) {
+        const ytdB = _getYtdBudget(metric.名称);
+        return ytdB > 0 ? Math.max(0, ytdB/Math.max(actual,0.01)) : null;
+      }
+      return Math.max(0, actual/target);
+    } else {
+      const actual = getDimAActual(metric.名称, m);
+      if (actual == null) return null;
+      const mTgt = _getMonthlyTarget(metric.名称, m);
+      if (mTgt == null) return null;
+      return Math.max(0, reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt);
+    }
   }).filter(r => r != null);
   const dimARate = aRates.length ? Math.min(1.2, Math.max(0, aRates.reduce((a,b)=>a+b,0)/aRates.length)) : null;
 
@@ -1510,16 +1549,6 @@ function renderCore() {
   // GM → 所有部门；销售部账号 → 销售部-1+销售部-2；其它部门账号 → 本部门
   const deptList = isGM ? DEPTS : (SESS_SCOPE === "销售部" ? ["销售部-1","销售部-2"] : [SESS_SCOPE]);
 
-  // 类型筛选按钮
-  const allTypes = Object.keys(TYPE_LABELS);
-  const typeButtons = `<div class="type-filter">
-    <button class="${state.typeFilter==='all'?'active':''}" onclick="window.setTypeFilter('all')">全部（${DATA.opps.length}）</button>
-    ${allTypes.map(k => {
-      const cnt = DATA.opps.filter(o => o.opp_type===k).length;
-      if (!cnt) return "";
-      return `<button class="${state.typeFilter===k?'active':''}" onclick="window.setTypeFilter('${k}')">${TYPE_LABELS[k]} ${cnt}</button>`;
-    }).join("")}
-  </div>`;
 
   let html = `<div class="legend">
     <b>核心攻坚项</b>（${DATA.opps.length} 条）= 原商机跟进表 <b>全部 50 条保留</b> · 年度级、关乎业务实际推进和商机兑现的最重要工作 · 系数 <b>1.2</b> · 计入维度B 50%。
@@ -1529,20 +1558,16 @@ function renderCore() {
     <span class="badge" style="background:#fef2f2;color:var(--err)">延期>5天或未完成 0</span>
     <span class="badge" style="background:#f9fafb;color:#6b7280">客观取消 不计</span>
   </div>`;
-  html += typeButtons;
 
   deptList.forEach(dept => {
-    let { core } = collectItems(dept, m);
-    if (state.typeFilter !== "all") {
-      core = core.filter(x => x.opp.opp_type === state.typeFilter);
-    }
+    const { core } = collectItems(dept, m);
     const r = computeDimB(dept, m);
     html += `<div class="card"><h2>
       <span class="tag accent">核心攻坚项 50%</span>${dept} · ${m}
-      <small>本月得分 ${fmtScore(r.coreScore)} · ${state.typeFilter==='all'?'共':'筛选后'} ${core.length} 条</small>
+      <small>本月得分 ${fmtScore(r.coreScore)} · 共 ${core.length} 条</small>
     </h2>`;
     if (!core.length) {
-      html += `<div style="font-size:12px;color:var(--mute);padding:12px;text-align:center">${state.typeFilter==='all'?'本月本部门无核心攻坚项':'当前筛选无匹配条目'}</div>`;
+      html += `<div style="font-size:12px;color:var(--mute);padding:12px;text-align:center">本月本部门无核心攻坚项</div>`;
     } else {
       core.forEach(({idx, opp, milestone}) => {
         const mgmt = SESS_CAN_MANAGE_DATA ? {
@@ -1550,7 +1575,6 @@ function renderCore() {
           origIdx: opp._isCustom ? null : idx, dept,
         } : null;
         html += renderItemCard("core", idx, opp.客户, [
-          `<span class="type-pill type-${opp.opp_type}">${TYPE_LABELS[opp.opp_type]||opp.opp_type}</span>`,
           `业务线：${opp.业务线||""}`,
           `阶段：${opp.阶段||"-"}`,
           `预估金额：${opp.预估金额||"-"}`,
@@ -1580,7 +1604,7 @@ window.openMetricDrawer = function(nameEnc) {
   if (!metric) return;
   const target = parseFloat(metric.目标值) || null;
   const reverse = name.includes("费用") || name.includes("成本");
-  let _cumActual = 0, _cumHas = false;
+  let _cumActual = 0, _cumHas = false, _cumTarget = 0;
   const rows = YEAR_MONTHS.map(mo => {
     const actual = getDimAActual(name, mo);
     const mTgt = _getMonthlyTarget(name, mo);
@@ -1589,10 +1613,16 @@ window.openMetricDrawer = function(nameEnc) {
     if (mTgt != null && actual != null) mRatio = reverse ? mTgt/Math.max(actual,0.01) : actual/mTgt;
     const mRp = mRatio == null ? "—" : (Math.max(0, Math.min(mRatio,1.5))*100).toFixed(1)+"%";
     const mColor = mRatio==null?"#94a3b8":mRatio>=1?"var(--ok)":mRatio>=0.8?"var(--warn)":"var(--err)";
-    // 年度累计完成率
-    if (actual != null) { _cumActual += actual; _cumHas = true; }
+    // 年度累计完成率：逆向指标用YTD月度目标累计/YTD实际，正向用YTD实际/年度目标
+    if (actual != null) { _cumActual += actual; _cumHas = true; _cumTarget += (mTgt || 0); }
     let yrRatio = null;
-    if (target && _cumHas) yrRatio = Math.max(0, reverse ? target/Math.max(_cumActual,0.01) : _cumActual/target);
+    if (_cumHas) {
+      if (reverse) {
+        yrRatio = _cumTarget > 0 ? Math.max(0, _cumTarget/Math.max(_cumActual,0.01)) : null;
+      } else if (target) {
+        yrRatio = Math.max(0, _cumActual/target);
+      }
+    }
     const yrRp = yrRatio == null ? "—" : (Math.min(yrRatio,1.5)*100).toFixed(1)+"%";
     const yrColor = yrRatio==null?"#94a3b8":yrRatio>=1?"var(--ok)":yrRatio>=0.8?"var(--warn)":"var(--err)";
     return `<tr>
@@ -1605,7 +1635,14 @@ window.openMetricDrawer = function(nameEnc) {
   }).join("");
   const cum = getDimAActualCumulative(name);
   let cumRatio = null;
-  if (target && cum != null) cumRatio = reverse ? target/Math.max(cum,0.01) : cum/target;
+  if (cum != null) {
+    if (reverse) {
+      const ytdB = _getYtdBudget(name);
+      cumRatio = ytdB > 0 ? Math.max(0, ytdB/Math.max(cum,0.01)) : null;
+    } else if (target) {
+      cumRatio = Math.max(0, cum/target);
+    }
+  }
 
   const host = document.getElementById("modalHost");
   host.innerHTML = `<div class="drawer-mask" onclick="window.closeDrawer(event)">
@@ -1633,7 +1670,7 @@ window.openMetricDrawer = function(nameEnc) {
           </table>
           <div style="font-size:11px;color:var(--mute);margin-top:10px;line-height:1.7">
             💡 月度实际值由总经理 / 经营管理部在【维度A · 业绩指标】tab 内填报，其它部门仅查看。<br>
-            ${reverse?'逆向指标：实际值越低完成率越高，完成率 = 目标值/实际值。':'正向指标：实际值越高完成率越高，完成率 = 实际值/目标值。'}
+            ${reverse?'逆向指标：实际值越低完成率越高。月度完成率 = 月度目标/当月实际；年度完成率 = 已报告月份月度目标累计/YTD实际。':'正向指标：实际值越高完成率越高，完成率 = 实际值/目标值。'}
           </div>
         </div>
       </div>
@@ -2174,7 +2211,6 @@ function _openMgmtModal(kind, mgmt, prefill) {
       <div class="mgmt-form">
         <div class="form-row">
           <div><label>所属部门</label><select id="_mf_dept">${_deptOptions(prefill.dept||"")}</select></div>
-          <div><label>类型</label><select id="_mf_opp_type">${_oppTypeOptions(prefill.opp_type||"other")}</select></div>
         </div>
         <div><label>客户 / 项目名称</label><input type="text" id="_mf_kehu" value="${escapeHtml(prefill.客户||"")}"></div>
         <div><label>归类说明（可选）</label><input type="text" id="_mf_guilei" value="${escapeHtml(prefill.归类说明||"")}"></div>
@@ -2235,7 +2271,7 @@ window._mgmtSave = async function() {
       const body = {
         dept,
         客户: document.getElementById("_mf_kehu").value.trim(),
-        opp_type: document.getElementById("_mf_opp_type").value,
+        opp_type: "other",
         归类说明: document.getElementById("_mf_guilei").value.trim(),
         系数: 1.2, milestones,
         custom_id: (mgmt && mgmt.isCustom) ? mgmt.customId : null,
