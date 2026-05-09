@@ -246,6 +246,7 @@ tr:hover td { background:#fafbfc; }
 .fill-status.done-70 { background:#ffedd5; color:#c2410c; }
 .fill-status.done-0 { background:#fee2e2; color:#b91c1c; }
 .fill-status.done--1 { background:#f1f5f9; color:#64748b; }
+.fill-status.locked { background:#f1f5f9; color:#94a3b8; border-color:#e2e8f0; cursor:default; font-style:italic; }
 
 .score-summary { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:10px; padding:9px 14px; background:#f8fafc; border:1px solid var(--bord); border-radius:7px; font-size:12px; }
 .score-summary .sm-score { font-weight:800; font-size:16px; }
@@ -295,6 +296,8 @@ tr:hover td { background:#fafbfc; }
 .file-list .fl-size { color:var(--mute); font-size:11px; flex:0 0 auto; }
 .file-list .fl-del { background:#fff; color:var(--err); border:1px solid #fee2e2; padding:3px 10px; border-radius:4px; font-size:11px; cursor:pointer; }
 .file-list .fl-del:hover { background:#fef2f2; }
+.file-list .fl-preview { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; padding:3px 10px; border-radius:4px; font-size:11px; text-decoration:none; margin-right:4px; }
+.file-list .fl-preview:hover { background:#dbeafe; }
 
 .backend-notice { padding:8px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; font-size:11px; color:#92400e; line-height:1.6; margin-top:10px; }
 
@@ -467,11 +470,20 @@ const API = {
     return _apiPost("/api/reset", {});
   },
 
-  // ── 任务管理（仅数据管理员 wangzhaoqian）──
+  // ── 任务管理 ──
   async manageOppSave(body)   { return _apiPost("/api/manage/opp", body); },
   async manageOppDelete(body) { return _apiReq("DELETE", "/api/manage/opp", body); },
   async manageTaskSave(body)  { return _apiPost("/api/manage/task", body); },
   async manageTaskDelete(body){ return _apiReq("DELETE", "/api/manage/task", body); },
+
+  // ── 文件上传（multipart）──
+  async uploadFile(file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch("/api/upload", { method:"POST", credentials:"same-origin", body:fd });
+    if (!r.ok) { const e = await r.json().catch(()=>({error:"上传失败"})); throw new Error(e.error||"上传失败"); }
+    return r.json();
+  },
 };
 
 // 辅助：统一 fetch + 错误处理
@@ -596,6 +608,18 @@ const SESS_CAN_MANAGE_DATA  = !!(SESSION && SESSION.canManageData);
 const IS_GM = SESS_ROLE === "GM";                           // 公司领导全览
 const IS_LEAD = SESS_ROLE === "LEAD";
 const IS_STAFF = SESS_ROLE === "STAFF";
+
+// 任务管理月度权限：wangzhaoqian 全权；5月/6月 所有人可编辑/新增（不可删除）；3月/4月 仅 wangzhaoqian
+// canFill=false 时填报弹窗只读（仅浏览已认定的结果）
+function _itemPerms(month) {
+  if (SESS_CAN_MANAGE_DATA) {
+    return { canEdit: true, canAdd: true, canDelete: true, canFill: true };
+  }
+  if (month === "5月" || month === "6月") {
+    return { canEdit: true, canAdd: true, canDelete: false, canFill: true };
+  }
+  return { canEdit: false, canAdd: false, canDelete: false, canFill: false };
+}
 const CAN_SEE_DEPT_COMPARE = IS_GM;                         // 只有GM能看部门对比/排名
 
 // 初始角色：GM 默认 "GM"（走原 GM 逻辑展示全部）；部门级账号锁定为对应部门（销售部走销售部-1兜底，其实 scope 字段已是'销售部'）
@@ -1574,9 +1598,11 @@ function renderCore() {
       html += `<div style="font-size:12px;color:var(--mute);padding:12px;text-align:center">本月本部门无核心攻坚项</div>`;
     } else {
       core.forEach(({idx, opp, milestone}) => {
-        const mgmt = SESS_CAN_MANAGE_DATA ? {
+        const _cp = _itemPerms(state.month);
+        const mgmt = (_cp.canEdit || _cp.canDelete) ? {
           isCustom: !!opp._isCustom, customId: opp._customId || null,
           origIdx: opp._isCustom ? null : idx, dept,
+          canEdit: _cp.canEdit, canDelete: _cp.canDelete,
         } : null;
         html += renderItemCard("core", idx, opp.客户, [
           `业务线：${opp.业务线||""}`,
@@ -1587,7 +1613,7 @@ function renderCore() {
         ].filter(Boolean), milestone, 1.2, "core", null, mgmt);
       });
     }
-    if (SESS_CAN_MANAGE_DATA) {
+    if (_itemPerms(state.month).canAdd) {
       const addKey = `_mgmtAdd_core_${dept.replace(/[^a-z0-9]/gi,'_')}`;
       window[addKey] = { dept };
       html += `<button class="mgmt-add-btn" onclick="window.openItemAddModal('core','${addKey}')">＋ 新增核心攻坚项</button>`;
@@ -1779,9 +1805,11 @@ function renderSpecial() {
       special.forEach(({idx, task, milestone}) => {
         const grade = task.等级 || "B";
         const coef = task.系数 || 1.0;
-        const mgmt = SESS_CAN_MANAGE_DATA ? {
+        const _sp = _itemPerms(state.month);
+        const mgmt = (_sp.canEdit || _sp.canDelete) ? {
           isCustom: !!task._isCustom, customId: task._customId || null,
           origIdx: task._isCustom ? null : idx, dept,
+          canEdit: _sp.canEdit, canDelete: _sp.canDelete,
         } : null;
         html += renderItemCard("special", idx, task.描述, [
           `<span class="badge badge-${grade}">${grade} 级</span>`,
@@ -1791,7 +1819,7 @@ function renderSpecial() {
         ], milestone, coef, "special", grade, mgmt);
       });
     }
-    if (SESS_CAN_MANAGE_DATA) {
+    if (_itemPerms(state.month).canAdd) {
       const addKey = `_mgmtAdd_special_${dept.replace(/[^a-z0-9]/gi,'_')}`;
       window[addKey] = { dept };
       html += `<button class="mgmt-add-btn" onclick="window.openItemAddModal('special','${addKey}')">＋ 新增专项任务项</button>`;
@@ -1830,22 +1858,31 @@ function renderItemCard(kind, idx, name, metaLines, milestone, coef, cls, grade,
   const coefTag = grade ? `${grade} ×${coef}` : `×${coef}`;
   const coefBadge = cls==="core" ? "badge-core" : "badge-special";
 
-  // 管理按钮（仅 wangzhaoqian 可见）
+  // 管理按钮（根据月份权限显示编辑/删除）
   let mgmtBtns = "";
-  if (SESS_CAN_MANAGE_DATA && mgmt) {
+  if (mgmt) {
     const ek = `_mgmt_${kind}_${idx}`;
     window[ek] = mgmt;
-    mgmtBtns = `<button class="mgmt-btn" onclick="window.openItemEditModal('${kind}','${ek}')">✎ 编辑</button>
-      <button class="mgmt-btn mgmt-del" onclick="window.deleteItemConfirm('${kind}','${ek}')">✕ 删除</button>`;
+    if (mgmt.canEdit) mgmtBtns += `<button class="mgmt-btn" onclick="window.openItemEditModal('${kind}','${ek}')">✎ 编辑</button>`;
+    if (mgmt.canDelete) mgmtBtns += `<button class="mgmt-btn mgmt-del" onclick="window.deleteItemConfirm('${kind}','${ek}')">✕ 删除</button>`;
   }
 
-  // 状态徽章
+  // 状态徽章（锁定月份只读，开放月份可编辑）
+  const _fp = _itemPerms(m);
   let statusBtn;
   if (score == null) {
-    statusBtn = `<button class="fill-status pending" onclick="window.openFillModal('${kind}',${idx},'${m}')">📝 未填报 · 点击填报</button>`;
+    if (_fp.canFill) {
+      statusBtn = `<button class="fill-status pending" onclick="window.openFillModal('${kind}',${idx},'${m}')">📝 未填报 · 点击填报</button>`;
+    } else {
+      statusBtn = `<span class="fill-status locked" title="${m}已锁定，仅供查看">— 未填报</span>`;
+    }
   } else {
     const scoreLabel = score === -1 ? "不计" : `${score} 分`;
-    statusBtn = `<button class="fill-status done-${score}" onclick="window.openFillModal('${kind}',${idx},'${m}')">✓ ${scoreLabel}</button>`;
+    if (_fp.canFill) {
+      statusBtn = `<button class="fill-status done-${score}" onclick="window.openFillModal('${kind}',${idx},'${m}')">✓ ${scoreLabel}</button>`;
+    } else {
+      statusBtn = `<button class="fill-status done-${score}" onclick="window.openFillModal('${kind}',${idx},'${m}',true)">✓ ${scoreLabel} · 查看</button>`;
+    }
   }
 
   // 得分摘要
@@ -1861,7 +1898,9 @@ function renderItemCard(kind, idx, name, metaLines, milestone, coef, cls, grade,
       <div>= 加权 <span class="sm-weighted">${weighted}</span></div>
       ${files.length?`<span class="sm-attach">📎 ${files.length} 个附件</span>`:""}
       ${note?`<div class="sm-note">${escapeHtml(note)}</div>`:""}
-      <button class="sm-edit" onclick="window.openFillModal('${kind}',${idx},'${m}')">编辑</button>
+      ${_itemPerms(m).canFill
+        ? `<button class="sm-edit" onclick="window.openFillModal('${kind}',${idx},'${m}')">编辑</button>`
+        : `<button class="sm-edit" onclick="window.openFillModal('${kind}',${idx},'${m}',true)" style="background:#94a3b8;border-color:#94a3b8">查看</button>`}
     </div>`;
   }
 
@@ -1916,7 +1955,7 @@ function _buildFillCtx() {
   return { name, meta, milestone: ms };
 }
 
-window.openFillModal = function(kind, idx, month) {
+window.openFillModal = function(kind, idx, month, viewOnly) {
   const initScore = getItemScore(kind, idx, month);
   const initNote  = getFillNote(kind, idx, month);
   const initFiles = getFillFiles(kind, idx, month).slice();
@@ -1925,17 +1964,73 @@ window.openFillModal = function(kind, idx, month) {
     score: initScore,
     note:  initNote,
     files: initFiles,
-    // 快照：记录弹窗打开时本地状态，fillSave 据此判断用户是否改动了某字段
+    viewOnly: !!viewOnly,
     snapshot: { score: initScore, note: initNote, files: JSON.stringify(initFiles) },
   };
   renderFillModal();
 };
 
+function _renderFileList(files, editable) {
+  if (!files.length) return "";
+  return `<ul class="file-list">
+    ${files.map((f,i) => {
+      const url = f.file_id ? `/api/files/${f.file_id}` : null;
+      const isPreviewable = f.name && /\.(png|jpg|jpeg|gif|webp|svg|bmp|pdf)$/i.test(f.name);
+      const linkBtn = url
+        ? `<a class="fl-preview" href="${url}" target="_blank">${isPreviewable?"预览":"下载"}</a>`
+        : "";
+      const delBtn = editable ? `<button class="fl-del" onclick="window.fillRemoveFile(${i})">删除</button>` : "";
+      return `<li>
+        <span class="fl-icon">📎</span>
+        <span class="fl-name">${escapeHtml(f.name)}</span>
+        <span class="fl-size">${fmtFileSize(f.size)}</span>
+        ${linkBtn}${delBtn}
+      </li>`;
+    }).join("")}
+  </ul>`;
+}
+
 function renderFillModal() {
   const host = document.getElementById("modalHost");
   const d = fillDraft;
   const ctx = _buildFillCtx();
+  const viewOnly = !!d.viewOnly;
 
+  const milestoneBar = ctx.milestone
+    ? `<div style="margin-top:8px;padding:8px 12px;background:#f8fafc;border-radius:6px;font-size:12px">
+         <b style="color:var(--brand-dark)">${d.month} 里程碑：</b>${escapeHtml(ctx.milestone)}
+       </div>`
+    : `<div style="margin-top:8px;padding:8px 12px;background:#f8fafc;border-radius:6px;font-size:12px;color:var(--mute)">
+         专项任务项按月任务描述固定，无单列里程碑。评分按任务完成度判分。
+       </div>`;
+
+  // ── 只读查看模式（已锁定月份）──
+  if (viewOnly) {
+    const scoreLabel = d.score == null ? "— 未填报" : (d.score === -1 ? "不计入" : `${d.score} 分`);
+    const scoreColor = d.score == null ? "#94a3b8" : d.score === 100 ? "var(--ok)" : d.score === 70 ? "var(--warn)" : "#64748b";
+    host.innerHTML = `<div class="mask" onclick="window.closeFillModal(event)">
+      <div class="box fill-modal" onclick="event.stopPropagation()">
+        <div class="fm-head">
+          <div class="fm-title">📋 ${d.kind==="core"?"里程碑":"任务完成度"}查看</div>
+          <div class="fm-sub">${escapeHtml(ctx.name)} · ${escapeHtml(ctx.meta)}</div>
+          <div style="margin-top:8px;padding:6px 12px;background:#fef9c3;border-radius:6px;font-size:12px;color:#92400e">
+            🔒 ${d.month}考核已认定，仅供查看，不可修改。
+          </div>
+          ${milestoneBar}
+        </div>
+        <div class="fm-section">
+          <label>评分结果</label>
+          <div style="font-size:22px;font-weight:700;color:${scoreColor};padding:8px 0">${scoreLabel}</div>
+        </div>
+        ${d.note ? `<div class="fm-section"><label>情况说明</label><div style="font-size:13px;color:#475569;line-height:1.7;white-space:pre-wrap">${escapeHtml(d.note)}</div></div>` : ""}
+        ${d.files.length ? `<div class="fm-section"><label>附件（${d.files.length} 个）</label>${_renderFileList(d.files, false)}</div>` : ""}
+        <div class="actions"><button class="btn-ghost" onclick="window.closeFillModal()">关闭</button></div>
+      </div>
+    </div>`;
+    return;
+  }
+
+  // ── 正常编辑模式 ──
   const scoreRadios = SCORE_OPTS.map(o => {
     const sel = d.score === o.v ? `sel-${o.v}` : "";
     const label = o.v === -1 ? "不计入" : `${o.v} 分`;
@@ -1947,23 +2042,6 @@ function renderFillModal() {
       <div class="sr-desc">${o.label}</div>
     </div>`;
   }).join("");
-
-  const fileList = d.files.length ? `<ul class="file-list">
-    ${d.files.map((f,i) => `<li>
-      <span class="fl-icon">📎</span>
-      <span class="fl-name">${escapeHtml(f.name)}</span>
-      <span class="fl-size">${fmtFileSize(f.size)}</span>
-      <button class="fl-del" onclick="window.fillRemoveFile(${i})">删除</button>
-    </li>`).join("")}
-  </ul>` : "";
-
-  const milestoneBar = ctx.milestone
-    ? `<div style="margin-top:8px;padding:8px 12px;background:#f8fafc;border-radius:6px;font-size:12px">
-         <b style="color:var(--brand-dark)">${d.month} 里程碑：</b>${escapeHtml(ctx.milestone)}
-       </div>`
-    : `<div style="margin-top:8px;padding:8px 12px;background:#f8fafc;border-radius:6px;font-size:12px;color:var(--mute)">
-         专项任务项按月任务描述固定，无单列里程碑。评分按任务完成度判分。
-       </div>`;
 
   host.innerHTML = `<div class="mask" onclick="window.closeFillModal(event)">
     <div class="box fill-modal" onclick="event.stopPropagation()">
@@ -1990,10 +2068,7 @@ function renderFillModal() {
           <div class="fd-hint">点击选择文件，或拖拽到此处<br><b>支持任意格式，单文件上限 50MB</b></div>
         </div>
         <input type="file" id="fillFileInput" multiple style="display:none" onchange="window.fillAddFiles(event)">
-        ${fileList}
-        <div class="backend-notice">
-          ⓘ 当前为演示环境，仅登记附件名称/大小/修改时间。<b>实际文件存储需后端对接后生效</b>，请同步将文件归档至部门共享盘或系统指定路径。
-        </div>
+        ${_renderFileList(d.files, true)}
       </div>
 
       <div class="actions">
@@ -2028,15 +2103,20 @@ window.fillSetScore = function(v) {
   renderFillModal();
 };
 
-window.fillAddFiles = function(ev) {
+window.fillAddFiles = async function(ev) {
   _syncNoteFromDOM();
   const files = Array.from(ev.target.files || []);
   let skipped = 0;
-  files.forEach(f => {
-    if (f.size > MAX_FILE_SIZE) { skipped++; return; }
-    fillDraft.files.push({ name:f.name, size:f.size, mtime:f.lastModified });
-  });
-  if (skipped) alert(`有 ${skipped} 个文件超过 50MB 限制已被跳过。`);
+  for (const f of files) {
+    if (f.size > MAX_FILE_SIZE) { skipped++; continue; }
+    try {
+      const result = await API.uploadFile(f);
+      fillDraft.files.push({ name: result.name, size: result.size, file_id: result.file_id });
+    } catch(e) {
+      skipped++;
+    }
+  }
+  if (skipped) toast(`有 ${skipped} 个文件上传失败或超过50MB限制`, "warn");
   renderFillModal();
 };
 
@@ -2170,7 +2250,13 @@ function _oppTypeOptions(selected) {
   return Object.entries(opts).map(([v,l])=>`<option value="${v}"${v===selected?" selected":""}>${l}</option>`).join("");
 }
 function _deptOptions(selected) {
-  return _DEPT_LIST.map(d=>`<option value="${d}"${d===selected?" selected":""}>${d}</option>`).join("");
+  // 非 GM / 非管理员只显示本部门的可选项
+  let list = _DEPT_LIST;
+  if (!IS_GM && !SESS_CAN_MANAGE_DATA && SESS_SCOPE) {
+    const base = SESS_SCOPE.replace(/-\d+$/, "");
+    list = _DEPT_LIST.filter(d => d.replace(/-\d+$/, "") === base);
+  }
+  return list.map(d=>`<option value="${d}"${d===selected?" selected":""}>${d}</option>`).join("");
 }
 
 // ── 核心攻坚项 编辑/新增 ──
@@ -2186,10 +2272,17 @@ window.openItemEditModal = function(kind, ek) {
   if (kind === "core") {
     if (mgmt.isCustom) {
       const co = (state.customOpps || []).find(c => c.id === mgmt.customId);
-      if (co) prefill = { dept: co.dept, 客户: co.客户, opp_type: co.opp_type, 归类说明: co.归类说明, 系数: co.系数, milestones: co.milestones };
+      if (co) prefill = { dept: co.dept, 客户: co.客户, opp_type: co.opp_type, 归类说明: co.归类说明, 业务线: co.业务线||"", 阶段: co.阶段||"", 预估金额: co.预估金额||"", 预计签约月: co.预计签约月||"", 系数: co.系数, milestones: co.milestones };
     } else {
       const o = DATA.opps[mgmt.origIdx];
-      if (o) prefill = { dept: o.主责部门, 客户: o.客户, opp_type: o.opp_type, 归类说明: o.归类说明, 系数: o.系数||1.2, milestones: {} };
+      const ovr = (state.oppOverrides||{})[mgmt.origIdx] || {};
+      if (o) prefill = {
+        dept: o.主责部门, 客户: ovr.客户||o.客户, opp_type: ovr.opp_type||o.opp_type,
+        归类说明: ovr.归类说明||o.归类说明||"",
+        业务线: ovr.业务线||o.业务线||"", 阶段: ovr.阶段||o.阶段||"",
+        预估金额: ovr.预估金额||o.预估金额||"", 预计签约月: ovr.预计签约月||o.预计签约月||"",
+        系数: o.系数||1.2, milestones: {},
+      };
     }
   } else {
     if (mgmt.isCustom) {
@@ -2217,6 +2310,14 @@ function _openMgmtModal(kind, mgmt, prefill) {
           <div><label>所属部门</label><select id="_mf_dept">${_deptOptions(prefill.dept||"")}</select></div>
         </div>
         <div><label>客户 / 项目名称</label><input type="text" id="_mf_kehu" value="${escapeHtml(prefill.客户||"")}"></div>
+        <div class="form-row">
+          <div><label>业务线（可选）</label><input type="text" id="_mf_yewu" value="${escapeHtml(prefill.业务线||"")}"></div>
+          <div><label>阶段（可选）</label><input type="text" id="_mf_jieduan" value="${escapeHtml(prefill.阶段||"")}"></div>
+        </div>
+        <div class="form-row">
+          <div><label>预估金额（可选）</label><input type="text" id="_mf_preamt" placeholder="例：500万" value="${escapeHtml(prefill.预估金额||"")}"></div>
+          <div><label>预计签约月（可选）</label><input type="text" id="_mf_premonth" placeholder="例：5月" value="${escapeHtml(prefill.预计签约月||"")}"></div>
+        </div>
         <div><label>归类说明（可选）</label><input type="text" id="_mf_guilei" value="${escapeHtml(prefill.归类说明||"")}"></div>
         <div><label>各月里程碑目标</label>
           <div class="ms-grid">
@@ -2240,6 +2341,7 @@ function _openMgmtModal(kind, mgmt, prefill) {
           <div><label>业务线（可选）</label><input type="text" id="_mf_yewu" value="${escapeHtml(prefill.业务线||"")}"></div>
           <div><label>期望完成（可选）</label><input type="text" id="_mf_qiwang" value="${escapeHtml(prefill.期望完成||"")}"></div>
         </div>
+        <div><label>完成情况（可选）</label><input type="text" id="_mf_wancheng" value="${escapeHtml(prefill.完成情况||"")}"></div>
         <div><label>各月里程碑目标</label>
           <div class="ms-grid">
             ${_MGMT_MONTHS.map(mo=>`<div class="ms-item"><label>${mo}</label><textarea id="_mf_ms_${mo}" rows="2">${escapeHtml(ms[mo]||"")}</textarea></div>`).join("")}
@@ -2277,6 +2379,10 @@ window._mgmtSave = async function() {
         客户: document.getElementById("_mf_kehu").value.trim(),
         opp_type: "other",
         归类说明: document.getElementById("_mf_guilei").value.trim(),
+        业务线: (document.getElementById("_mf_yewu")?.value||"").trim(),
+        阶段: (document.getElementById("_mf_jieduan")?.value||"").trim(),
+        预估金额: (document.getElementById("_mf_preamt")?.value||"").trim(),
+        预计签约月: (document.getElementById("_mf_premonth")?.value||"").trim(),
         系数: 1.2, milestones,
         custom_id: (mgmt && mgmt.isCustom) ? mgmt.customId : null,
         orig_idx:  (mgmt && !mgmt.isCustom) ? mgmt.origIdx : null,
@@ -2293,7 +2399,7 @@ window._mgmtSave = async function() {
         等级: grade, 系数: coefMap[grade] || 1.0,
         业务线: document.getElementById("_mf_yewu").value.trim(),
         期望完成: document.getElementById("_mf_qiwang").value.trim(),
-        完成情况: "",
+        完成情况: (document.getElementById("_mf_wancheng")?.value||"").trim(),
         milestones,
         custom_id: (mgmt && mgmt.isCustom) ? mgmt.customId : null,
         orig_idx:  (mgmt && !mgmt.isCustom) ? mgmt.origIdx : null,

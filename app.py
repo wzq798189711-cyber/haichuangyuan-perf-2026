@@ -139,6 +139,25 @@ def ensure_account_permissions():
         )
 
 
+# ─────────────────── Schema 升级（幂等，不删数据）───────────────────
+def ensure_schema_updates():
+    """幂等追加新列/新表，绝不删除现有数据。每次启动时执行。"""
+    # custom_opps / opp_overrides 新增核心攻坚项扩展字段
+    for col in ["业务线", "阶段", "预估金额", "预计签约月"]:
+        execute(f'ALTER TABLE custom_opps    ADD COLUMN IF NOT EXISTS "{col}" TEXT')
+        execute(f'ALTER TABLE opp_overrides  ADD COLUMN IF NOT EXISTS "{col}" TEXT')
+    # 文件存储表
+    execute("""CREATE TABLE IF NOT EXISTS uploaded_files (
+        id           TEXT PRIMARY KEY,
+        filename     TEXT,
+        content_type TEXT,
+        size         INTEGER,
+        data         BYTEA,
+        uploaded_by  TEXT,
+        created_at   TIMESTAMPTZ DEFAULT NOW()
+    )""")
+
+
 # ─────────────────── 财报默认值初始化 ───────────────────
 def ensure_finance_defaults():
     """若 system_config 中 fin_report_ver 与当前版本不符，则向 dim_a_actual 补填缺失数据。"""
@@ -228,6 +247,8 @@ def build_state():
         custom_opps.append({
             "id": r["id"], "dept": r["dept"], "客户": r["客户"],
             "opp_type": r["opp_type"], "归类说明": r["归类说明"] or "",
+            "业务线": r.get("业务线") or "", "阶段": r.get("阶段") or "",
+            "预估金额": r.get("预估金额") or "", "预计签约月": r.get("预计签约月") or "",
             "系数": float(r["系数"] or 1.2),
             "milestones": co_ms.get(r["id"], {}),
             "deleted": bool(r["deleted"]),
@@ -250,7 +271,8 @@ def build_state():
     opp_overrides = {}
     for r in (opp_ovr_rows or []):
         opp_overrides[r["opp_idx"]] = {
-            k: r[k] for k in ("客户", "opp_type", "归类说明", "deleted") if r.get(k) is not None
+            k: r[k] for k in ("客户", "opp_type", "归类说明", "业务线", "阶段", "预估金额", "预计签约月", "deleted")
+            if r.get(k) is not None
         }
     task_overrides = {}
     for r in (task_ovr_rows or []):
@@ -277,6 +299,7 @@ def index():
         html = f.read()
     user = current_user()
     ensure_account_permissions()
+    ensure_schema_updates()
     ensure_finance_defaults()
     state = build_state() if user else {}
     session_payload = _session_payload(user) if user else None
@@ -615,8 +638,9 @@ def manage_required(f):
 
 
 @app.route("/api/manage/opp", methods=["POST"])
-@manage_required
+@login_required
 def api_manage_opp_save():
+    u_info = request.user
     b = request.get_json(force=True, silent=True) or {}
     custom_id = b.get("custom_id")
     orig_idx  = b.get("orig_idx")
@@ -624,26 +648,40 @@ def api_manage_opp_save():
     ke_hu     = b.get("客户", "")
     opp_type  = b.get("opp_type", "other")
     gui_lei   = b.get("归类说明", "")
+    ye_wu     = b.get("业务线", "")
+    jie_duan  = b.get("阶段", "")
+    pre_amt   = b.get("预估金额", "")
+    pre_month = b.get("预计签约月", "")
     xi_shu    = float(b.get("系数", 1.2))
     milestones = b.get("milestones", {})
-    u = request.user["u"]
+    u = u_info["u"]
+
+    # 非管理员：只能操作自己部门的条目
+    if not u_info.get("can_manage_data"):
+        scope = u_info.get("scope") or ""
+        base_scope = scope.replace("-1", "").replace("-2", "")
+        base_dept  = dept.replace("-1", "").replace("-2", "")
+        if scope and base_scope != base_dept:
+            return jsonify({"error": "只能操作本部门条目"}), 403
 
     if orig_idx is not None:
         execute(
-            """INSERT INTO opp_overrides (opp_idx, 客户, opp_type, 归类说明, deleted, updated_by, updated_at)
-               VALUES (%s, %s, %s, %s, FALSE, %s, NOW())
+            """INSERT INTO opp_overrides (opp_idx, 客户, opp_type, 归类说明, 业务线, 阶段, 预估金额, 预计签约月, deleted, updated_by, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
                ON CONFLICT (opp_idx) DO UPDATE SET
                  客户=EXCLUDED.客户, opp_type=EXCLUDED.opp_type,
-                 归类说明=EXCLUDED.归类说明, deleted=FALSE,
+                 归类说明=EXCLUDED.归类说明, 业务线=EXCLUDED.业务线,
+                 阶段=EXCLUDED.阶段, 预估金额=EXCLUDED.预估金额,
+                 预计签约月=EXCLUDED.预计签约月, deleted=FALSE,
                  updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
-            (orig_idx, ke_hu, opp_type, gui_lei, u),
+            (orig_idx, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, u),
         )
         return jsonify({"ok": True, "orig_idx": orig_idx})
 
     if custom_id is not None:
         execute(
-            "UPDATE custom_opps SET dept=%s, 客户=%s, opp_type=%s, 归类说明=%s, 系数=%s WHERE id=%s",
-            (dept, ke_hu, opp_type, gui_lei, xi_shu, custom_id),
+            'UPDATE custom_opps SET dept=%s, 客户=%s, opp_type=%s, 归类说明=%s, 业务线=%s, 阶段=%s, 预估金额=%s, 预计签约月=%s, 系数=%s WHERE id=%s',
+            (dept, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, xi_shu, custom_id),
         )
         execute("DELETE FROM custom_opp_milestones WHERE custom_opp_id=%s", (custom_id,))
         for month, text in milestones.items():
@@ -655,8 +693,8 @@ def api_manage_opp_save():
         return jsonify({"ok": True, "custom_id": custom_id})
 
     row = query(
-        "INSERT INTO custom_opps (dept, 客户, opp_type, 归类说明, 系数, created_by) VALUES (%s,%s,%s,%s,%s,%s) RETURNING id",
-        (dept, ke_hu, opp_type, gui_lei, xi_shu, u), one=True,
+        'INSERT INTO custom_opps (dept, 客户, opp_type, 归类说明, 业务线, 阶段, 预估金额, 预计签约月, 系数, created_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id',
+        (dept, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, xi_shu, u), one=True,
     )
     new_id = row["id"]
     for month, text in milestones.items():
@@ -691,8 +729,9 @@ def api_manage_opp_delete():
 
 
 @app.route("/api/manage/task", methods=["POST"])
-@manage_required
+@login_required
 def api_manage_task_save():
+    u_info = request.user
     b = request.get_json(force=True, silent=True) or {}
     custom_id  = b.get("custom_id")
     orig_idx   = b.get("orig_idx")
@@ -704,7 +743,15 @@ def api_manage_task_save():
     qi_wang    = b.get("期望完成", "")
     wan_cheng  = b.get("完成情况", "")
     milestones = b.get("milestones", {})
-    u = request.user["u"]
+    u = u_info["u"]
+
+    # 非管理员：只能操作自己部门的条目
+    if not u_info.get("can_manage_data"):
+        scope = u_info.get("scope") or ""
+        base_scope = scope.replace("-1", "").replace("-2", "")
+        base_dept  = dept.replace("-1", "").replace("-2", "")
+        if scope and base_scope != base_dept:
+            return jsonify({"error": "只能操作本部门条目"}), 403
 
     if orig_idx is not None:
         execute(
@@ -770,6 +817,50 @@ def api_manage_task_delete():
     return jsonify({"ok": True})
 
 
+# ─────────────────── 路由：文件上传 / 下载预览 ───────────────────
+@app.route("/api/upload", methods=["POST"])
+@login_required
+def api_upload():
+    import mimetypes
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "no file"}), 400
+    data = f.read()
+    if len(data) > 50 * 1024 * 1024:
+        return jsonify({"error": "file too large"}), 400
+    file_id = secrets.token_hex(16)
+    filename = f.filename or "file"
+    ct = f.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    execute(
+        "INSERT INTO uploaded_files (id, filename, content_type, size, data, uploaded_by) VALUES (%s,%s,%s,%s,%s,%s)",
+        (file_id, filename, ct, len(data), psycopg2.Binary(data), request.user["u"]),
+    )
+    return jsonify({"file_id": file_id, "name": filename, "size": len(data)})
+
+
+@app.route("/api/files/<file_id>")
+@login_required
+def api_serve_file(file_id):
+    row = query(
+        "SELECT filename, content_type, data FROM uploaded_files WHERE id=%s",
+        (file_id,), one=True,
+    )
+    if not row:
+        return jsonify({"error": "not found"}), 404
+    resp = make_response(bytes(row["data"]))
+    ct = row["content_type"] or "application/octet-stream"
+    resp.headers["Content-Type"] = ct
+    fname = row["filename"] or "file"
+    # inline for images/pdf (预览)，attachment for others (下载)
+    disposition = "inline" if ct.startswith("image/") or ct == "application/pdf" else "attachment"
+    try:
+        encoded = fname.encode("utf-8").decode("latin-1")
+    except Exception:
+        encoded = "file"
+    resp.headers["Content-Disposition"] = f"{disposition}; filename=\"{encoded}\""
+    return resp
+
+
 # ─────────────────── 静态文件兜底 ───────────────────
 @app.route("/<path:p>")
 def static_files(p):
@@ -779,5 +870,6 @@ def static_files(p):
 if __name__ == "__main__":
     with app.app_context():
         ensure_account_permissions()
+        ensure_schema_updates()
         ensure_finance_defaults()
     app.run(host="0.0.0.0", port=5000, debug=False)
