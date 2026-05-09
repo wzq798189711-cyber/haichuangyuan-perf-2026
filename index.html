@@ -260,6 +260,8 @@ tr:hover td { background:#fafbfc; }
 .score-summary .sm-attach { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; background:#eff6ff; color:#2563eb; border-radius:10px; font-size:11px; }
 .score-summary .sm-edit { padding:4px 12px; border-radius:5px; background:#fff; border:1px solid var(--bord); color:var(--mute); font-size:11px; cursor:pointer; }
 .score-summary .sm-edit:hover { border-color:var(--brand); color:var(--brand); }
+.score-summary .sm-view { padding:4px 12px; border-radius:5px; background:#2563eb; border:1px solid #1d4ed8; color:#fff !important; font-size:11px; cursor:pointer; font-weight:500; }
+.score-summary .sm-view:hover { background:#1d4ed8; }
 
 .fill-modal { max-width:640px; }
 .fill-modal .fm-head { padding-bottom:12px; border-bottom:1px solid var(--bord); margin-bottom:14px; }
@@ -296,8 +298,9 @@ tr:hover td { background:#fafbfc; }
 .file-list .fl-size { color:var(--mute); font-size:11px; flex:0 0 auto; }
 .file-list .fl-del { background:#fff; color:var(--err); border:1px solid #fee2e2; padding:3px 10px; border-radius:4px; font-size:11px; cursor:pointer; }
 .file-list .fl-del:hover { background:#fef2f2; }
-.file-list .fl-preview { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; padding:3px 10px; border-radius:4px; font-size:11px; text-decoration:none; margin-right:4px; }
+.file-list .fl-preview { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; padding:3px 10px; border-radius:4px; font-size:11px; text-decoration:none; margin-right:4px; font-weight:500; }
 .file-list .fl-preview:hover { background:#dbeafe; }
+.file-list .fl-no-preview { background:#f8fafc; color:#94a3b8; border:1px dashed #cbd5e1; padding:3px 10px; border-radius:4px; font-size:11px; margin-right:4px; cursor:help; }
 
 .backend-notice { padding:8px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; font-size:11px; color:#92400e; line-height:1.6; margin-top:10px; }
 
@@ -1900,7 +1903,7 @@ function renderItemCard(kind, idx, name, metaLines, milestone, coef, cls, grade,
       ${note?`<div class="sm-note">${escapeHtml(note)}</div>`:""}
       ${_itemPerms(m).canFill
         ? `<button class="sm-edit" onclick="window.openFillModal('${kind}',${idx},'${m}')">编辑</button>`
-        : `<button class="sm-edit" onclick="window.openFillModal('${kind}',${idx},'${m}',true)" style="background:#94a3b8;border-color:#94a3b8">查看</button>`}
+        : `<button class="sm-view" onclick="window.openFillModal('${kind}',${idx},'${m}',true)">查看详情</button>`}
     </div>`;
   }
 
@@ -1977,11 +1980,11 @@ function _renderFileList(files, editable) {
       const url = f.file_id ? `/api/files/${f.file_id}` : null;
       const isPreviewable = f.name && /\.(png|jpg|jpeg|gif|webp|svg|bmp|pdf)$/i.test(f.name);
       const linkBtn = url
-        ? `<a class="fl-preview" href="${url}" target="_blank">${isPreviewable?"预览":"下载"}</a>`
-        : "";
+        ? `<a class="fl-preview" href="${url}" target="_blank">${isPreviewable?"🔍 预览":"⬇ 下载"}</a>`
+        : `<span class="fl-no-preview" title="此附件为系统升级前上传，暂不支持预览，可在编辑时重新上传">历史附件</span>`;
       const delBtn = editable ? `<button class="fl-del" onclick="window.fillRemoveFile(${i})">删除</button>` : "";
-      return `<li>
-        <span class="fl-icon">📎</span>
+      return `<li${url ? ` style="cursor:default"` : ""}>
+        <span class="fl-icon">${isPreviewable?"🖼":"📎"}</span>
         <span class="fl-name">${escapeHtml(f.name)}</span>
         <span class="fl-size">${fmtFileSize(f.size)}</span>
         ${linkBtn}${delBtn}
@@ -2309,19 +2312,19 @@ function _openMgmtModal(kind, mgmt, prefill) {
         <div class="form-row">
           <div><label>所属部门</label><select id="_mf_dept">${_deptOptions(prefill.dept||"")}</select></div>
         </div>
-        <div><label>客户 / 项目名称</label><input type="text" id="_mf_kehu" value="${escapeHtml(prefill.客户||"")}"></div>
+        <div><label>客户 / 项目名称</label><input type="text" id="_mf_kehu" placeholder="例：XX学校采购合同 / XX大客户AI课程项目" value="${escapeHtml(prefill.客户||"")}"></div>
         <div class="form-row">
-          <div><label>业务线（可选）</label><input type="text" id="_mf_yewu" value="${escapeHtml(prefill.业务线||"")}"></div>
-          <div><label>阶段（可选）</label><input type="text" id="_mf_jieduan" value="${escapeHtml(prefill.阶段||"")}"></div>
+          <div><label>业务线（可选）</label><input type="text" id="_mf_yewu" placeholder="例：K12课程销售 / 政府采购 / 企培" value="${escapeHtml(prefill.业务线||"")}"></div>
+          <div><label>阶段（可选）</label><input type="text" id="_mf_jieduan" placeholder="例：初步接触 / 方案对接 / 合同签订" value="${escapeHtml(prefill.阶段||"")}"></div>
         </div>
         <div class="form-row">
           <div><label>预估金额（可选）</label><input type="text" id="_mf_preamt" placeholder="例：500万" value="${escapeHtml(prefill.预估金额||"")}"></div>
           <div><label>预计签约月（可选）</label><input type="text" id="_mf_premonth" placeholder="例：5月" value="${escapeHtml(prefill.预计签约月||"")}"></div>
         </div>
-        <div><label>归类说明（可选）</label><input type="text" id="_mf_guilei" value="${escapeHtml(prefill.归类说明||"")}"></div>
+        <div><label>归类说明（可选）</label><input type="text" id="_mf_guilei" placeholder="例：2026年重点攻坚客户，产品为AI课程包" value="${escapeHtml(prefill.归类说明||"")}"></div>
         <div><label>各月里程碑目标</label>
           <div class="ms-grid">
-            ${_MGMT_MONTHS.map(mo=>`<div class="ms-item"><label>${mo}</label><textarea id="_mf_ms_${mo}" rows="2">${escapeHtml(ms[mo]||"")}</textarea></div>`).join("")}
+            ${_MGMT_MONTHS.map(mo=>`<div class="ms-item"><label>${mo}</label><textarea id="_mf_ms_${mo}" rows="2" placeholder="例：完成产品方案演示，取得决策链联系方式并推进立项">${escapeHtml(ms[mo]||"")}</textarea></div>`).join("")}
           </div>
         </div>
       </div>`;
@@ -2336,15 +2339,15 @@ function _openMgmtModal(kind, mgmt, prefill) {
             <option value="C"${(prefill.等级||"B")==="C"?" selected":""}>C 级（系数 0.8）</option>
           </select></div>
         </div>
-        <div><label>任务描述</label><input type="text" id="_mf_desc" value="${escapeHtml(prefill.描述||"")}"></div>
+        <div><label>任务描述</label><input type="text" id="_mf_desc" placeholder="例：完成L2核心课程教案/学案/系统平台配套开发并通过内部评审" value="${escapeHtml(prefill.描述||"")}"></div>
         <div class="form-row">
-          <div><label>业务线（可选）</label><input type="text" id="_mf_yewu" value="${escapeHtml(prefill.业务线||"")}"></div>
-          <div><label>期望完成（可选）</label><input type="text" id="_mf_qiwang" value="${escapeHtml(prefill.期望完成||"")}"></div>
+          <div><label>业务线（可选）</label><input type="text" id="_mf_yewu" placeholder="例：研发交付 / 销售支持 / 系统平台" value="${escapeHtml(prefill.业务线||"")}"></div>
+          <div><label>期望完成（可选）</label><input type="text" id="_mf_qiwang" placeholder="例：5月底完成初稿并通过内部评审" value="${escapeHtml(prefill.期望完成||"")}"></div>
         </div>
-        <div><label>完成情况（可选）</label><input type="text" id="_mf_wancheng" value="${escapeHtml(prefill.完成情况||"")}"></div>
+        <div><label>完成情况（可选）</label><input type="text" id="_mf_wancheng" placeholder="例：已完成初稿，待内部评审确认" value="${escapeHtml(prefill.完成情况||"")}"></div>
         <div><label>各月里程碑目标</label>
           <div class="ms-grid">
-            ${_MGMT_MONTHS.map(mo=>`<div class="ms-item"><label>${mo}</label><textarea id="_mf_ms_${mo}" rows="2">${escapeHtml(ms[mo]||"")}</textarea></div>`).join("")}
+            ${_MGMT_MONTHS.map(mo=>`<div class="ms-item"><label>${mo}</label><textarea id="_mf_ms_${mo}" rows="2" placeholder="例：完成本月课程包并提交审核，输出交付物清单">${escapeHtml(ms[mo]||"")}</textarea></div>`).join("")}
           </div>
         </div>
       </div>`;
