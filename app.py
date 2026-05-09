@@ -676,6 +676,16 @@ def api_manage_opp_save():
                  updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
             (orig_idx, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, u),
         )
+        for mon, txt in milestones.items():
+            execute(
+                """INSERT INTO opp_milestone (opp_idx, month, milestone_text, updated_by)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (opp_idx, month) DO UPDATE SET
+                     milestone_text=EXCLUDED.milestone_text,
+                     updated_by=EXCLUDED.updated_by,
+                     updated_at=NOW()""",
+                (orig_idx, mon, txt, u),
+            )
         return jsonify({"ok": True, "orig_idx": orig_idx})
 
     if custom_id is not None:
@@ -764,6 +774,16 @@ def api_manage_task_save():
                  updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
             (orig_idx, miao_shu, deng_ji, ye_wu_xian, qi_wang, wan_cheng, u),
         )
+        for mon, txt in milestones.items():
+            execute(
+                """INSERT INTO task_milestone (task_idx, month, milestone_text, updated_by)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (task_idx, month) DO UPDATE SET
+                     milestone_text=EXCLUDED.milestone_text,
+                     updated_by=EXCLUDED.updated_by,
+                     updated_at=NOW()""",
+                (orig_idx, mon, txt, u),
+            )
         return jsonify({"ok": True, "orig_idx": orig_idx})
 
     if custom_id is not None:

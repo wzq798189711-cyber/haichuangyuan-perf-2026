@@ -2280,13 +2280,19 @@ window.openItemEditModal = function(kind, ek) {
     } else {
       const o = DATA.opps[mgmt.origIdx];
       const ovr = (state.oppOverrides||{})[mgmt.origIdx] || {};
-      if (o) prefill = {
-        dept: o.主责部门, 客户: ovr.客户||o.客户, opp_type: ovr.opp_type||o.opp_type,
-        归类说明: ovr.归类说明||o.归类说明||"",
-        业务线: ovr.业务线||o.业务线||"", 阶段: ovr.阶段||o.阶段||"",
-        预估金额: ovr.预估金额||o.预估金额||"", 预计签约月: ovr.预计签约月||o.预计签约月||"",
-        系数: o.系数||1.2, milestones: {},
-      };
+      if (o) {
+        const oppMs = {};
+        _MGMT_MONTHS.forEach(mo => {
+          oppMs[mo] = (o.里程碑 && o.里程碑[mo]) ? (o.里程碑[mo].目标 || "") : "";
+        });
+        prefill = {
+          dept: o.主责部门, 客户: ovr.客户||o.客户, opp_type: ovr.opp_type||o.opp_type,
+          归类说明: ovr.归类说明||o.归类说明||"",
+          业务线: ovr.业务线||o.业务线||"", 阶段: ovr.阶段||o.阶段||"",
+          预估金额: ovr.预估金额||o.预估金额||"", 预计签约月: ovr.预计签约月||o.预计签约月||"",
+          系数: o.系数||1.2, milestones: oppMs,
+        };
+      }
     }
   } else {
     if (mgmt.isCustom) {
@@ -2295,16 +2301,22 @@ window.openItemEditModal = function(kind, ek) {
     } else {
       const t = DATA.tasks[mgmt.origIdx];
       const tovr = (state.taskOverrides||{})[mgmt.origIdx] || {};
-      if (t) prefill = {
-        dept: t.部门,
-        描述: tovr.描述 !== undefined ? tovr.描述 : t.描述,
-        等级: tovr.等级 || t.等级,
-        系数: t.系数||1.0,
-        业务线: tovr.业务线 !== undefined ? tovr.业务线 : (t.业务线||""),
-        期望完成: tovr.期望完成 !== undefined ? tovr.期望完成 : (t.期望完成||""),
-        完成情况: tovr.完成情况 !== undefined ? tovr.完成情况 : (t.完成情况||""),
-        milestones: {},
-      };
+      if (t) {
+        const taskMs = {};
+        _MGMT_MONTHS.forEach(mo => {
+          taskMs[mo] = (t.里程碑 && t.里程碑[mo]) ? (t.里程碑[mo].目标 || "") : "";
+        });
+        prefill = {
+          dept: t.部门,
+          描述: tovr.描述 !== undefined ? tovr.描述 : t.描述,
+          等级: tovr.等级 || t.等级,
+          系数: t.系数||1.0,
+          业务线: tovr.业务线 !== undefined ? tovr.业务线 : (t.业务线||""),
+          期望完成: tovr.期望完成 !== undefined ? tovr.期望完成 : (t.期望完成||""),
+          完成情况: tovr.完成情况 !== undefined ? tovr.完成情况 : (t.完成情况||""),
+          milestones: taskMs,
+        };
+      }
     }
   }
   _openMgmtModal(kind, mgmt, prefill);
