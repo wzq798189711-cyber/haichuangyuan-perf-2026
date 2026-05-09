@@ -506,10 +506,31 @@ async function _apiReq(method, url, body) {
   return r.json().catch(()=>({}));
 }
 
+// 轻量 toast 通知（ok / warn / err）
+function toast(msg, type) {
+  let host = document.getElementById("_toastHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "_toastHost";
+    host.style.cssText = "position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none";
+    document.body.appendChild(host);
+  }
+  const el = document.createElement("div");
+  const bg = type === "ok" ? "#22c55e" : type === "err" ? "#ef4444" : "#f59e0b";
+  el.style.cssText = `background:${bg};color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;font-weight:500;box-shadow:0 4px 16px rgba(0,0,0,.18);opacity:0;transition:opacity .2s;max-width:320px`;
+  el.textContent = msg;
+  host.appendChild(el);
+  requestAnimationFrame(() => { el.style.opacity = "1"; });
+  setTimeout(() => {
+    el.style.opacity = "0";
+    setTimeout(() => el.remove(), 250);
+  }, 3000);
+}
+
 // 通用错误提示（优先用页面 toast，回退到 console.error）
 function _apiError(label, e) {
   console.error(`[${label}]`, e);
-  if (typeof toast === "function") toast(`${label}：${e.message||e}`, "warn");
+  toast(`${label}：${e.message||e}`, "warn");
 }
 
 function _readSession() {
@@ -2439,6 +2460,21 @@ window._mgmtSave = async function() {
     state.customTasks   = fresh.customTasks   || [];
     state.oppOverrides  = fresh.oppOverrides  || {};
     state.taskOverrides = fresh.taskOverrides || {};
+    state.oppFill       = fresh.oppFill       || {};
+    state.taskFill      = fresh.taskFill      || {};
+    // 把最新里程碑覆盖值同步回 DATA，让卡片立即显示最新内容
+    ["oppFill","taskFill"].forEach(key => {
+      const store = state[key];
+      Object.keys(store).forEach(idx => {
+        const rec = store[idx];
+        if (!rec.milestones) return;
+        const obj = key === "oppFill" ? DATA.opps[+idx] : DATA.tasks[+idx];
+        if (!obj || !obj.里程碑) return;
+        Object.entries(rec.milestones).forEach(([m, v]) => {
+          if (obj.里程碑[m]) obj.里程碑[m].目标 = v;
+        });
+      });
+    });
     render();
     toast("保存成功", "ok");
   } catch(e) { _apiError("保存失败", e); }
