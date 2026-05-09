@@ -932,7 +932,8 @@ function collectItems(dept, month) {
     const opp = {
       主责部门: co.dept, 客户: co.客户, opp_type: co.opp_type,
       归类说明: co.归类说明, 系数: co.系数,
-      业务线: "", 阶段: "", 预估金额: "", 预计签约月: "",
+      业务线: co.业务线||"", 阶段: co.阶段||"",
+      预估金额: co.预估金额||"", 预计签约月: co.预计签约月||"",
       里程碑: {}, _isCustom: true, _customId: co.id,
     };
     core.push({ idx, opp, milestone: monthMs });
@@ -2293,7 +2294,17 @@ window.openItemEditModal = function(kind, ek) {
       if (ct) prefill = { dept: ct.dept, 描述: ct.描述, 等级: ct.等级, 系数: ct.系数, 业务线: ct.业务线, 期望完成: ct.期望完成, 完成情况: ct.完成情况, milestones: ct.milestones };
     } else {
       const t = DATA.tasks[mgmt.origIdx];
-      if (t) prefill = { dept: t.部门, 描述: t.描述, 等级: t.等级, 系数: t.系数||1.0, 业务线: t.业务线, 期望完成: t.期望完成, 完成情况: t.完成情况, milestones: {} };
+      const tovr = (state.taskOverrides||{})[mgmt.origIdx] || {};
+      if (t) prefill = {
+        dept: t.部门,
+        描述: tovr.描述 !== undefined ? tovr.描述 : t.描述,
+        等级: tovr.等级 || t.等级,
+        系数: t.系数||1.0,
+        业务线: tovr.业务线 !== undefined ? tovr.业务线 : (t.业务线||""),
+        期望完成: tovr.期望完成 !== undefined ? tovr.期望完成 : (t.期望完成||""),
+        完成情况: tovr.完成情况 !== undefined ? tovr.完成情况 : (t.完成情况||""),
+        milestones: {},
+      };
     }
   }
   _openMgmtModal(kind, mgmt, prefill);
