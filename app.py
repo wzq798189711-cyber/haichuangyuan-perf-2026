@@ -149,6 +149,10 @@ def ensure_schema_updates():
     # opp_overrides / task_overrides 新增部门字段（支持调整责任部门）
     execute('ALTER TABLE opp_overrides  ADD COLUMN IF NOT EXISTS "主责部门" TEXT')
     execute('ALTER TABLE task_overrides ADD COLUMN IF NOT EXISTS "部门" TEXT')
+    # 清除部门字段中的空字符串或非法值（防止条目从列表中消失）
+    _DEPTS_SQL = "('销售部-1','销售部-2','经营管理部','研发交付部','综合部')"
+    execute(f'UPDATE opp_overrides  SET "主责部门"=NULL WHERE "主责部门" IS NOT NULL AND ("主责部门"=\'\' OR "主责部门" NOT IN {_DEPTS_SQL})')
+    execute(f'UPDATE task_overrides SET "部门"=NULL     WHERE "部门"     IS NOT NULL AND ("部门"=\'\' OR "部门" NOT IN {_DEPTS_SQL})')
     # 文件存储表
     execute("""CREATE TABLE IF NOT EXISTS uploaded_files (
         id           TEXT PRIMARY KEY,
@@ -271,17 +275,30 @@ def build_state():
             "deleted": bool(r["deleted"]),
         })
 
+    _VALID_DEPTS = {"销售部-1", "销售部-2", "经营管理部", "研发交付部", "综合部"}
     opp_overrides = {}
     for r in (opp_ovr_rows or []):
-        opp_overrides[r["opp_idx"]] = {
-            k: r[k] for k in ("主责部门", "客户", "opp_type", "归类说明", "业务线", "阶段", "预估金额", "预计签约月", "deleted")
-            if r.get(k) is not None
-        }
+        row = {}
+        for k in ("主责部门", "客户", "opp_type", "归类说明", "业务线", "阶段", "预估金额", "预计签约月", "deleted"):
+            v = r.get(k)
+            if v is None:
+                continue
+            # 空字符串或非法部门值不覆盖原始数据
+            if k == "主责部门" and (not v or v not in _VALID_DEPTS):
+                continue
+            row[k] = v
+        opp_overrides[r["opp_idx"]] = row
     task_overrides = {}
     for r in (task_ovr_rows or []):
-        task_overrides[r["task_idx"]] = {
-            k: r[k] for k in ("部门", "描述", "等级", "业务线", "期望完成", "完成情况", "deleted") if r.get(k) is not None
-        }
+        row = {}
+        for k in ("部门", "描述", "等级", "业务线", "期望完成", "完成情况", "deleted"):
+            v = r.get(k)
+            if v is None:
+                continue
+            if k == "部门" and (not v or v not in _VALID_DEPTS):
+                continue
+            row[k] = v
+        task_overrides[r["task_idx"]] = row
 
     return {
         "oppFill": opp_fill, "taskFill": task_fill, "dimAActual": dim_a,

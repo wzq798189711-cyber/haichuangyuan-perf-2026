@@ -2274,6 +2274,17 @@ function _oppTypeOptions(selected) {
   const opts = {"channel":"渠道签约","product":"产品/平台","talent":"人才/团队","ecosystem":"生态/合作","brand":"品牌","gov":"政府/园区","group":"集团协同","other":"其他"};
   return Object.entries(opts).map(([v,l])=>`<option value="${v}"${v===selected?" selected":""}>${l}</option>`).join("");
 }
+// 将原始部门字段值（可能含别名/多部门）规范化为 _DEPT_LIST 中的标准值
+function _canonicalDept(rawDept) {
+  if (!rawDept) return "";
+  if (_DEPT_LIST.includes(rawDept)) return rawDept;
+  // 用 deptMatch 逐一匹配，返回第一个命中的标准部门
+  for (const d of _DEPT_LIST) {
+    if (deptMatch(rawDept, d)) return d;
+  }
+  return rawDept;
+}
+
 function _deptOptions(selected) {
   // 非 GM / 非管理员只显示本部门的可选项
   let list = _DEPT_LIST;
@@ -2307,7 +2318,7 @@ window.openItemEditModal = function(kind, ek) {
           oppMs[mo] = (o.里程碑 && o.里程碑[mo]) ? (o.里程碑[mo].目标 || "") : "";
         });
         prefill = {
-          dept: o.主责部门, 客户: ovr.客户||o.客户, opp_type: ovr.opp_type||o.opp_type,
+          dept: _canonicalDept(ovr.主责部门 || o.主责部门), 客户: ovr.客户||o.客户, opp_type: ovr.opp_type||o.opp_type,
           归类说明: ovr.归类说明||o.归类说明||"",
           业务线: ovr.业务线||o.业务线||"", 阶段: ovr.阶段||o.阶段||"",
           预估金额: ovr.预估金额||o.预估金额||"", 预计签约月: ovr.预计签约月||o.预计签约月||"",
@@ -2328,7 +2339,7 @@ window.openItemEditModal = function(kind, ek) {
           taskMs[mo] = (t.里程碑 && t.里程碑[mo]) ? (t.里程碑[mo].目标 || "") : "";
         });
         prefill = {
-          dept: t.部门,
+          dept: _canonicalDept(tovr.部门 || t.部门),
           描述: tovr.描述 !== undefined ? tovr.描述 : t.描述,
           等级: tovr.等级 || t.等级,
           系数: t.系数||1.0,
