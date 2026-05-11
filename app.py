@@ -685,6 +685,9 @@ def api_manage_opp_save():
             return jsonify({"error": "只能操作本部门条目"}), 403
 
     if orig_idx is not None:
+        _VALID_DEPTS = {"销售部-1", "销售部-2", "经营管理部", "研发交付部", "综合部"}
+        # 仅当部门值合法时才写入，否则传 NULL（保留原始静态数据中的部门）
+        safe_dept = dept if dept in _VALID_DEPTS else None
         execute(
             """INSERT INTO opp_overrides (opp_idx, "主责部门", 客户, opp_type, 归类说明, 业务线, 阶段, 预估金额, 预计签约月, deleted, updated_by, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
@@ -695,7 +698,7 @@ def api_manage_opp_save():
                  阶段=EXCLUDED.阶段, 预估金额=EXCLUDED.预估金额,
                  预计签约月=EXCLUDED.预计签约月, deleted=FALSE,
                  updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
-            (orig_idx, dept, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, u),
+            (orig_idx, safe_dept, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, u),
         )
         for mon, txt in milestones.items():
             execute(
@@ -785,6 +788,9 @@ def api_manage_task_save():
             return jsonify({"error": "只能操作本部门条目"}), 403
 
     if orig_idx is not None:
+        _VALID_DEPTS = {"销售部-1", "销售部-2", "经营管理部", "研发交付部", "综合部"}
+        # 仅当部门值合法时才写入，否则传 NULL（保留原始静态数据中的部门）
+        safe_dept = dept if dept in _VALID_DEPTS else None
         execute(
             """INSERT INTO task_overrides (task_idx, "部门", 描述, 等级, 业务线, 期望完成, 完成情况, deleted, updated_by, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
@@ -794,7 +800,7 @@ def api_manage_task_save():
                  业务线=EXCLUDED.业务线, 期望完成=EXCLUDED.期望完成,
                  完成情况=EXCLUDED.完成情况, deleted=FALSE,
                  updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
-            (orig_idx, dept, miao_shu, deng_ji, ye_wu_xian, qi_wang, wan_cheng, u),
+            (orig_idx, safe_dept, miao_shu, deng_ji, ye_wu_xian, qi_wang, wan_cheng, u),
         )
         for mon, txt in milestones.items():
             execute(
