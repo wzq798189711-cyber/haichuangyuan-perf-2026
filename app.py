@@ -146,6 +146,9 @@ def ensure_schema_updates():
     for col in ["业务线", "阶段", "预估金额", "预计签约月"]:
         execute(f'ALTER TABLE custom_opps    ADD COLUMN IF NOT EXISTS "{col}" TEXT')
         execute(f'ALTER TABLE opp_overrides  ADD COLUMN IF NOT EXISTS "{col}" TEXT')
+    # opp_overrides / task_overrides 新增部门字段（支持调整责任部门）
+    execute('ALTER TABLE opp_overrides  ADD COLUMN IF NOT EXISTS "主责部门" TEXT')
+    execute('ALTER TABLE task_overrides ADD COLUMN IF NOT EXISTS "部门" TEXT')
     # 文件存储表
     execute("""CREATE TABLE IF NOT EXISTS uploaded_files (
         id           TEXT PRIMARY KEY,
@@ -271,13 +274,13 @@ def build_state():
     opp_overrides = {}
     for r in (opp_ovr_rows or []):
         opp_overrides[r["opp_idx"]] = {
-            k: r[k] for k in ("客户", "opp_type", "归类说明", "业务线", "阶段", "预估金额", "预计签约月", "deleted")
+            k: r[k] for k in ("主责部门", "客户", "opp_type", "归类说明", "业务线", "阶段", "预估金额", "预计签约月", "deleted")
             if r.get(k) is not None
         }
     task_overrides = {}
     for r in (task_ovr_rows or []):
         task_overrides[r["task_idx"]] = {
-            k: r[k] for k in ("描述", "等级", "业务线", "期望完成", "完成情况", "deleted") if r.get(k) is not None
+            k: r[k] for k in ("部门", "描述", "等级", "业务线", "期望完成", "完成情况", "deleted") if r.get(k) is not None
         }
 
     return {
@@ -666,15 +669,16 @@ def api_manage_opp_save():
 
     if orig_idx is not None:
         execute(
-            """INSERT INTO opp_overrides (opp_idx, 客户, opp_type, 归类说明, 业务线, 阶段, 预估金额, 预计签约月, deleted, updated_by, updated_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
+            """INSERT INTO opp_overrides (opp_idx, "主责部门", 客户, opp_type, 归类说明, 业务线, 阶段, 预估金额, 预计签约月, deleted, updated_by, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
                ON CONFLICT (opp_idx) DO UPDATE SET
+                 "主责部门"=EXCLUDED."主责部门",
                  客户=EXCLUDED.客户, opp_type=EXCLUDED.opp_type,
                  归类说明=EXCLUDED.归类说明, 业务线=EXCLUDED.业务线,
                  阶段=EXCLUDED.阶段, 预估金额=EXCLUDED.预估金额,
                  预计签约月=EXCLUDED.预计签约月, deleted=FALSE,
                  updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
-            (orig_idx, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, u),
+            (orig_idx, dept, ke_hu, opp_type, gui_lei, ye_wu, jie_duan, pre_amt, pre_month, u),
         )
         for mon, txt in milestones.items():
             execute(
@@ -765,14 +769,15 @@ def api_manage_task_save():
 
     if orig_idx is not None:
         execute(
-            """INSERT INTO task_overrides (task_idx, 描述, 等级, 业务线, 期望完成, 完成情况, deleted, updated_by, updated_at)
-               VALUES (%s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
+            """INSERT INTO task_overrides (task_idx, "部门", 描述, 等级, 业务线, 期望完成, 完成情况, deleted, updated_by, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE, %s, NOW())
                ON CONFLICT (task_idx) DO UPDATE SET
+                 "部门"=EXCLUDED."部门",
                  描述=EXCLUDED.描述, 等级=EXCLUDED.等级,
                  业务线=EXCLUDED.业务线, 期望完成=EXCLUDED.期望完成,
                  完成情况=EXCLUDED.完成情况, deleted=FALSE,
                  updated_by=EXCLUDED.updated_by, updated_at=NOW()""",
-            (orig_idx, miao_shu, deng_ji, ye_wu_xian, qi_wang, wan_cheng, u),
+            (orig_idx, dept, miao_shu, deng_ji, ye_wu_xian, qi_wang, wan_cheng, u),
         )
         for mon, txt in milestones.items():
             execute(
